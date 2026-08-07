@@ -474,6 +474,7 @@
       <button class="bt" id="lz-editeur">Ouvrir dans l’éditeur</button>
       <button class="bt" id="lz-finder">Révéler dans le Finder</button>
       <button class="bt" id="lz-voler">Voler jusqu’au nœud</button>
+      <button class="bt" id="lz-supprimer" title="Déplacer la fiche en corbeille (récupérable)">🗑 Supprimer</button>
     </div>
     <div class="lz-trouver">
       <input id="lz-q" type="search" autocomplete="off" spellcheck="false" placeholder="Chercher dans la fiche…  (⌘F)">
@@ -2096,7 +2097,7 @@ function estEnAvant(n) {
 
 function opaciteDe(n) {
   var o = 1;
-  if (etat.trouves) o = etat.trouves[n.id] ? 1 : 0.15;
+  if (etat.trouves) o = etat.trouves[n.id] ? 1 : (etat.filtreBrouillons ? 0 : 0.15);
   if (etat.survol || etat.selection) o = estEnAvant(n) ? 1 : Math.min(o, 0.18);
   if (etat.pile.length || etat.drillAnim) {
     var f = etat.drillAnim ? etat.drillMix : 1;
@@ -2233,12 +2234,19 @@ function dessinerFiche(n, op, temps) {
     ctx.drawImage(bille(trouve ? '#4ade80' : couleur), n.sx - R, n.sy - R, R * 2, R * 2);
   }
 
-  /* Brouillon (statut: draft) : cerne pointillé ambre — « pas encore validé ». */
+  /* Brouillon (statut: draft) : halo ambre doux + cerne pointillé franc — repérable
+     d'un coup d'œil dans la galaxie, « pas encore validé ». */
   if (n.draft) {
     ctx.save();
-    ctx.setLineDash([2, 3]);
-    ctx.strokeStyle = hexRgba('#e8c268', 0.9); ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.arc(n.sx, n.sy, R + 3, 0, TAU); ctx.stroke();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.22;
+    var Rg = R * 3.2;
+    ctx.drawImage(halo('#e8c268'), n.sx - Rg, n.sy - Rg, Rg * 2, Rg * 2);
+    ctx.restore();
+    ctx.save();
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = hexRgba('#f0b429', 0.95); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(n.sx, n.sy, R + 4, 0, TAU); ctx.stroke();
     ctx.restore();
   }
 
@@ -2769,6 +2777,7 @@ function copierRepli(c) {
 /* --------------------------------------------------------------- recherche */
 
 function filtrerLocal(q) {
+  etat.filtreBrouillons = false;                  // une recherche annule le filtre « brouillons »
   q = q.trim().toLowerCase();
   if (!q) { etat.trouves = null; reveiller(); return; }
   var t = {};
@@ -2815,6 +2824,8 @@ function fermerResultats() { var b = $('resultats'); if (b) b.classList.remove('
 function fermerRecherche() {
   fermerResultats();
   etat.resultats = null; etat.selResultat = -1; etat.trouves = null;
+  etat.filtreBrouillons = false;
+  majCompteurBrouillons();                        // restaure le libellé « N brouillons »
   reveiller();
 }
 
@@ -3334,6 +3345,8 @@ function ouvrirLiseuse(n) {
   $('lz-editeur').style.display = (estPdf(n) || estFantome) ? 'none' : '';
   $('lz-editer').style.display = (estPdf(n) || estFantome) ? 'none' : '';   // pas d'édition d'un PDF ou d'un fantôme
   $('lz-finder').style.display = estFantome ? 'none' : '';
+  $('lz-supprimer').style.display = (estPdf(n) || estFantome) ? 'none' : '';  // .md seulement
+  reinitConfirmSuppr();                           // on repart toujours sans confirmation armée
   etat.edition = null;                            // on repart toujours en mode lecture
   $('lz-brouillon').style.display = 'none';      // masqué tant que le statut n'est pas lu
 
@@ -3497,6 +3510,7 @@ function majCompteurBrouillons() {
 /* Liste les brouillons dans le panneau de résultats (réutilisé tel quel) et les
    surligne sur la carte. */
 function listerBrouillons() {
+  if (etat.filtreBrouillons) { fermerRecherche(); return; }   // bascule OFF : tout réafficher
   var res = [], t = {};
   for (var i = 0; i < noeuds.length; i++) {
     var n = noeuds[i];
@@ -3505,7 +3519,9 @@ function listerBrouillons() {
     t[n.id] = true;
   }
   if (!res.length) { toast('Aucun brouillon à relire'); return; }
+  etat.filtreBrouillons = true;                    // le reste de l'univers est MASQUÉ (opacité 0)
   etat.trouves = t;
+  var pill = $('brouillons-pill'); if (pill) pill.textContent = '✓ brouillons seuls — tout afficher';
   afficherResultats('brouillons', { results: res, confidence: 'high' });
   reveiller();
 }
@@ -3557,6 +3573,42 @@ function naviguerVersFiche(n) {
 $('lz-fermer').onclick = function () { fermerLiseuse(); reveiller(); };
 $('lz-editer').onclick = entrerEdition;
 $('lz-voler').onclick = function () { if (etat.ficheLue) volerVersNoeud(etat.ficheLue); };
+
+/* Suppression d'une fiche : DÉPLACEMENT en corbeille récupérable, jamais un rm.
+   Confirmation à deux temps (pas de dialogue natif) : 1er clic arme, 2e confirme. */
+function reinitConfirmSuppr() {
+  var b = $('lz-supprimer'); if (!b) return;
+  etat.confSuppr = 0; b.disabled = false;
+  b.textContent = '🗑 Supprimer';
+  b.style.background = ''; b.style.color = ''; b.style.borderColor = '';
+}
+function rechargerGraphe() {
+  apiGet('/api/graph', null, function (g) {
+    apiGet('/api/layers', null, function (c) { demarrer(g, c); },
+      function () { demarrer(g, { applications: [], routines: [], skills: [] }); });
+  }, function () { /* échec silencieux : un rechargement de page corrige la carte */ });
+}
+$('lz-supprimer').onclick = function () {
+  var n = etat.ficheLue, c = n && cheminDe(n); if (!c) return;
+  var b = $('lz-supprimer');
+  if (!etat.confSuppr) {                            // 1er clic : armer la confirmation
+    etat.confSuppr = 1;
+    b.textContent = '⚠︎ Confirmer la suppression';
+    b.style.background = '#b91c1c'; b.style.color = '#fff'; b.style.borderColor = '#b91c1c';
+    setTimeout(function () { if (etat.confSuppr) reinitConfirmSuppr(); }, 4000);
+    return;
+  }
+  b.disabled = true; b.textContent = '… suppression';
+  apiPost('/api/delete', { path: c }, function () {
+    toast('Fiche déplacée en corbeille (récupérable)');
+    reinitConfirmSuppr();
+    fermerLiseuse();
+    setTimeout(rechargerGraphe, 1000);            // laisse la réindexation se faire, puis rafraîchit
+  }, function (s, d) {
+    reinitConfirmSuppr();
+    toast((d && d.erreur) || ('Suppression impossible (' + s + ').'));
+  });
+};
 $('lz-editeur').onclick = function () {
   var n = etat.ficheLue, c = n && cheminDe(n); if (!c) return;
   if (MODE === 'relie') {

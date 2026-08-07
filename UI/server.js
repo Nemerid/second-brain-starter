@@ -586,6 +586,62 @@ async function routeSave(req, res) {
   });
 }
 
+/**
+ * `POST /api/delete` — retire une fiche de la base. JAMAIS une suppression
+ * définitive : la fiche est DÉPLACÉE dans une corbeille récupérable
+ * (`.brain/corbeille/`) avec une ligne de manifeste qui note son emplacement
+ * d'origine (donc restaurable). Mêmes garde-fous que les autres routes :
+ * jeton, Host/Origin (répartiteur), chemin confiné + `.md`, refus des zones
+ * brutes immuables. Le retrait du fichier déclenche le fs.watch → réindexation.
+ */
+async function routeDelete(req, res) {
+  let corps;
+  try {
+    corps = JSON.parse(await lireCorps(req, 8192) || '{}');
+  } catch (e) {
+    repondreErreur(res, e.statut || 400, 'Corps JSON invalide.');
+    return;
+  }
+  let cible;
+  try {
+    cible = P.resoudreConfine(String(corps.path || ''), RACINES, { extensions: ['.md'] });
+  } catch (e) {
+    repondreErreur(res, e.statut || 400, e.message);
+    return;
+  }
+  // Pas de suppression en zone brute (`raw/`) : immuable par doctrine.
+  for (const s of P.lireSources()) {
+    for (const rawDir of s.raw || []) {
+      let racineRaw;
+      try { racineRaw = fs.realpathSync(path.join(s.root, rawDir)); } catch (_) { continue; }
+      if (cible.reel === racineRaw || cible.reel.startsWith(racineRaw + path.sep)) {
+        repondreErreur(res, 403, 'Zone brute immuable : suppression interdite ici.');
+        return;
+      }
+    }
+  }
+  // Déplacement vers la corbeille récupérable + manifeste (jamais de rm définitif).
+  try {
+    const corbeille = path.join(P.KB_DIR, '.brain', 'corbeille');
+    fs.mkdirSync(corbeille, { recursive: true });
+    const stamp = Date.now();
+    const dest = path.join(corbeille, stamp + '-' + path.basename(cible.reel));
+    fs.copyFileSync(cible.reel, dest);
+    fs.appendFileSync(
+      path.join(corbeille, 'manifest.jsonl'),
+      JSON.stringify({ at: new Date(stamp).toISOString(), original: cible.reel, corbeille: dest }) + '\n'
+    );
+    fs.unlinkSync(cible.reel);
+    repondreJson(res, 200, {
+      ok: true,
+      path: P.cheminAffichable(cible.reel, RACINES),
+      corbeille: dest,
+    });
+  } catch (e) {
+    repondreErreur(res, 500, 'Suppression impossible : ' + e.message);
+  }
+}
+
 function routeEvents(req, res) {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -696,6 +752,7 @@ const serveur = http.createServer(async (req, res) => {
       if (chemin === '/api/open' && req.method === 'POST') return routeOpen(req, res);
       if (chemin === '/api/promote' && req.method === 'POST') return routePromote(req, res);
       if (chemin === '/api/save' && req.method === 'POST') return routeSave(req, res);
+      if (chemin === '/api/delete' && req.method === 'POST') return routeDelete(req, res);
       repondreErreur(res, 404, 'Route inconnue.');
       return;
     }
