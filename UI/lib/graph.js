@@ -73,6 +73,7 @@ function normaliser(brut, sourcesConnues) {
       orphan: n.orphan === true,
       unprocessed: n.unprocessed === true,
       ghost: n.ghost === true,
+      statut: (n.statut === 'draft' || n.statut === 'canon') ? n.statut : null,
       x: Number.isFinite(Number(n.x)) ? Number(n.x) : null,
       y: Number.isFinite(Number(n.y)) ? Number(n.y) : null,
     });
