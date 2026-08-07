@@ -1,6 +1,6 @@
 # Second Brain Agentic OS — starter
 
-**v0.1.0** — première version publique · licence MIT
+**v0.1.1** — licence MIT
 
 *A local, agentic second brain for Claude Code. You drop in raw material; the agent
 distills it into an atomic wiki. A dependency-free BM25F engine (`brain.js`) answers

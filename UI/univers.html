@@ -3329,8 +3329,11 @@ function ouvrirLiseuse(n) {
   var chemin = cheminDe(n);
   $('lz-chemin').textContent = chemin ? cheminRelatif(chemin) : '—';
   $('lz-finder').textContent = estPdf(n) ? 'Ouvrir le PDF (Finder)' : 'Révéler dans le Finder';
-  $('lz-editeur').style.display = estPdf(n) ? 'none' : '';
-  $('lz-editer').style.display = estPdf(n) ? 'none' : '';   // pas d'édition intégrée d'un PDF
+  var estFantome = !chemin;                       // wikilien sans cible : aucun fichier derrière
+  if (estFantome) bd.appendChild(badge('fantôme', '#f87171'));
+  $('lz-editeur').style.display = (estPdf(n) || estFantome) ? 'none' : '';
+  $('lz-editer').style.display = (estPdf(n) || estFantome) ? 'none' : '';   // pas d'édition d'un PDF ou d'un fantôme
+  $('lz-finder').style.display = estFantome ? 'none' : '';
   etat.edition = null;                            // on repart toujours en mode lecture
   $('lz-brouillon').style.display = 'none';      // masqué tant que le statut n'est pas lu
 
@@ -3348,7 +3351,12 @@ function ouvrirLiseuse(n) {
       'Lancer <code>node UI/server.js</code> pour lire les fiches.</p>';
     return;
   }
-  if (estPdf(n)) chargerPdf(n); else chargerMarkdown(n);
+  if (estFantome) {
+    corps.innerHTML = '<div class="lz-vide"><p><strong>Ce nœud n’existe pas sur le disque.</strong></p>' +
+      '<p>Un wikilien <code>[[…]]</code> pointe vers lui sans cible — souvent un exemple de format ' +
+      'dans un gabarit ou une doc, ou une fiche pas encore créée. Rien n’est cassé : il n’y a ' +
+      'simplement aucun fichier à lire ici.</p></div>';
+  } else if (estPdf(n)) { chargerPdf(n); } else { chargerMarkdown(n); }
   reveiller();
 }
 
