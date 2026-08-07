@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.secondbrain.index — réindexation nocturne du second cerveau (GABARIT).
+
+  CE FICHIER EST UN TEMPLATE. Remplacez les placeholders <...> par vos chemins,
+  renommez-le sans « .template », puis suivez routines/README.md pour l'installer
+  (copie vers ~/Library/LaunchAgents/ puis launchctl bootstrap).
+
+  Placeholders à remplacer :
+    <CHEMIN_NODE>            chemin absolu de node — donné par « which node »
+    <RACINE_DU_SECOND_BRAIN> chemin absolu de la racine du dépôt (où vit brain.js)
+    <HOME>                   votre dossier personnel (ex. /Users/vous)
+
+  Cette routine ne fait appel à AUCUN modèle de langage : elle relit les fichiers,
+  reconstruit l'index inversé et régénère UI/data/graph.json. Coût nul, aucun risque
+  d'écriture dans wiki/. La consolidation qui, elle, demande un raisonnement est la
+  Dream Sequence : voir routines/dream-sequence.md.
+
+  Chemins absolus obligatoires : launchd n'hérite ni du PATH du shell, ni de nvm.
+  Après toute mise à jour de nvm, revérifier <CHEMIN_NODE> avec « which node ».
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.secondbrain.index</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string><CHEMIN_NODE></string>
+    <string><RACINE_DU_SECOND_BRAIN>/brain.js</string>
+    <string>index</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string><RACINE_DU_SECOND_BRAIN></string>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string><HOME>/Library/Logs/com.secondbrain.index.log</string>
+
+  <key>StandardErrorPath</key>
+  <string><HOME>/Library/Logs/com.secondbrain.index.err.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>LowPriorityIO</key>
+  <true/>
+
+  <key>Nice</key>
+  <integer>5</integer>
+</dict>
+</plist>

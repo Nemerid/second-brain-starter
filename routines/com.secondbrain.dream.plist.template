@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.secondbrain.dream — Dream Sequence planifiée (GABARIT, livré INERTE).
+
+  CE FICHIER EST UN TEMPLATE et n'est PAS armé par défaut. La Dream Sequence
+  utilise un modèle de langage et coûte quelques centimes par passe : elle ne
+  doit tourner que si vous l'avez explicitement armée (voir routines/README.md
+  et routines/dream-sequence.md).
+
+  Remplacez <RACINE_DU_SECOND_BRAIN> et <HOME> par vos chemins absolus, retirez
+  « .template », puis installez comme l'index (routines/README.md).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.secondbrain.dream</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string><RACINE_DU_SECOND_BRAIN>/routines/dream-nightly.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string><RACINE_DU_SECOND_BRAIN></string>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string><RACINE_DU_SECOND_BRAIN>/.brain/dream-launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string><RACINE_DU_SECOND_BRAIN>/.brain/dream-launchd.log</string>
+</dict>
+</plist>

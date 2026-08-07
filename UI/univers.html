@@ -1,0 +1,4112 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Second cerveau — univers</title>
+<!--
+  Vue « Univers » : le second cerveau vu comme un système stellaire.
+
+  MÊME CONTRAINTE STRUCTURANTE QUE index.html — cette page doit fonctionner DEUX FOIS.
+    1. servie par UI/server.js  → mode « relié » : XHR sur /api/*, jeton X-Brain-Token.
+    2. ouverte en double-clic   → mode « dégradé » : tout vient de window.__BRAIN__
+                                  (écrit par `node UI/server.js --snapshot`).
+  Une page file:// a une origine opaque : ni fetch(), ni type="module", ni import.
+  D'où : aucun fetch, aucun module, uniquement des <script src> classiques et XHR.
+  Aucune bibliothèque : le rendu est du canvas 2D écrit à la main.
+
+  Composition (rayons en unités de monde) :
+    0                CLAUDE.md, le noyau
+    104 · 136 · 168  anneaux SKILLS (étoiles à 4 branches, orange)
+    215 → 520        zone MÉMOIRE (galaxies de fiches, une par source ou par dossier)
+    600              anneau ROUTINES (planètes dorées à satellite)
+    700              anneau APPLICATIONS (hexagones facettés, un par connecteur MCP)
+
+  CARTE 2D À PLAT — pas de volume, pas de perspective.
+    · chaque nœud est un point (x, y) du plan ; aucun z, aucune projection
+      perspective, aucune décroissance de taille avec la distance ;
+    · les galaxies sont des amas PLATS, les anneaux des cercles vus DE FACE ;
+    · un SEUL angle (etat.angle) fait pivoter tout le disque autour de son
+      centre, dans le plan de l'écran : rotation AUTOMATIQUE lente (curseur
+      Rotation) ou À LA MAIN (Maj+glisser / clic droit, qui met l'auto en pause).
+      Le glisser gauche panoramique, la molette zoome vers le curseur.
+  Tout est NET : plus de plan focal, plus de bokeh, plus de brouillard.
+  Effets 2D conservés : impulsions le long des filaments, ciel d'étoiles à
+  parallaxe + scintillement + étoile filante, respiration des galaxies (±2 %),
+  transitions de disposition en vague, halo pulsant sur sélection, montée au
+  survol. Halos PRÉ-RENDUS en sprites : jamais de `ctx.filter`, jamais de
+  `shadowBlur` par nœud.
+-->
+<style>
+  :root{
+    --fond:#05060a; --verre:rgba(13,17,26,.86); --bord:rgba(126,168,216,.18);
+    --texte:#e6ecf5; --doux:#9fb0cb; --faible:#5f6f8c;
+    --orange:#ff9d4d; --or:#e8c268; --violet:#a78bfa; --acier:#7ea8d8; --vert:#4ade80;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:var(--fond); color:var(--texte); overflow:hidden;
+    font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  canvas#ciel{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:grab}
+  canvas#ciel.tire{cursor:grabbing}
+  button,input,select{font:inherit;color:inherit}
+
+  /* --------------------------------------------------------------- entête */
+  .entete{
+    position:fixed;top:14px;left:18px;z-index:7;display:flex;align-items:center;gap:11px;
+    pointer-events:none;
+  }
+  .entete .logo{width:26px;height:29px;flex:0 0 auto;opacity:.95}
+  .entete .txt b{
+    display:block;font-size:13px;font-weight:700;letter-spacing:3.4px;
+    text-shadow:0 1px 14px #000;
+  }
+  .entete .txt span{
+    display:block;font-size:9.5px;letter-spacing:1.4px;color:var(--faible);margin-top:2px;
+  }
+  .entete a{pointer-events:auto}
+  a.retour{
+    position:fixed;top:17px;left:250px;z-index:7;
+    display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:8px;
+    text-decoration:none;color:var(--doux);font-size:11.5px;
+    background:var(--verre);border:1px solid var(--bord);backdrop-filter:blur(9px);
+  }
+  a.retour:hover{color:var(--texte);border-color:rgba(126,168,216,.45)}
+
+  /* ------------------------------------------------------------- panneau */
+  .panneau{
+    position:fixed;top:14px;right:14px;width:262px;z-index:6;
+    background:var(--verre);border:1px solid var(--bord);border-radius:12px;
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    box-shadow:0 18px 50px rgba(0,0,0,.6);padding:12px;
+  }
+  .panneau .sec{
+    font-size:9.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--faible);
+    margin:13px 0 6px;
+  }
+  .panneau .sec:first-child{margin-top:2px}
+  #q{
+    width:100%;background:rgba(6,9,15,.75);border:1px solid var(--bord);border-radius:8px;
+    padding:8px 10px;color:var(--texte);outline:none;font-size:12px;
+  }
+  #q:focus{border-color:rgba(255,157,77,.55);box-shadow:0 0 0 3px rgba(255,157,77,.08)}
+  #q::placeholder{color:#54617a}
+  .rang{display:flex;gap:5px}
+  .rang.deux > *{flex:1 1 0}
+  .bt{
+    flex:1 1 auto;padding:6px 4px;border-radius:7px;cursor:pointer;font-size:11.5px;
+    background:rgba(255,255,255,.045);border:1px solid transparent;color:var(--doux);
+    transition:background .12s,color .12s,border-color .12s;white-space:nowrap;
+  }
+  .bt:hover{background:rgba(255,255,255,.1);color:var(--texte)}
+  .bt:disabled{opacity:.35;cursor:default}
+  .bt.actif{background:#e9edf5;color:#0a0d14;font-weight:600}
+  .bt.contour{border-color:rgba(255,157,77,.5);color:var(--orange);background:transparent}
+  .bt.contour:hover{background:rgba(255,157,77,.12)}
+  .lig{display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:var(--doux);margin:11px 0 3px}
+  .lig .val{color:var(--orange);font-variant-numeric:tabular-nums;font-size:11px}
+  input[type=range]{-webkit-appearance:none;width:100%;height:16px;background:transparent;cursor:pointer;margin:0}
+  input[type=range]::-webkit-slider-runnable-track{height:2px;background:#2a3346;border-radius:2px}
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:11px;height:11px;border-radius:50%;background:var(--orange);
+    margin-top:-4.5px;box-shadow:0 0 8px rgba(255,157,77,.55);
+  }
+  .coche{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--doux);margin:11px 0 2px;cursor:pointer}
+  .coche input{accent-color:var(--orange)}
+  .compte{margin-top:11px;font-size:10.5px;color:var(--faible);letter-spacing:.2px;line-height:1.5}
+
+  /* ------------------------------------------------------ carte de survol */
+  .survol{
+    position:fixed;z-index:8;pointer-events:none;opacity:0;transform:translateY(3px);
+    transition:opacity .1s;max-width:300px;padding:8px 11px;border-radius:9px;
+    background:rgba(10,14,22,.92);border:1px solid var(--bord);backdrop-filter:blur(10px);
+    box-shadow:0 12px 34px rgba(0,0,0,.7);font-size:12px;
+  }
+  .survol.on{opacity:1;transform:none}
+  .survol b{display:block;font-weight:600;margin-bottom:3px;line-height:1.3}
+  .survol .m{color:var(--doux);font-size:10.5px}
+  .survol .aide{color:var(--faible);font-size:10px;margin-top:4px;letter-spacing:.2px}
+
+  /* --------------------------------------------- fiche d'inspection (haut G) */
+  .fiche{
+    position:fixed;top:78px;left:18px;width:298px;z-index:7;
+    opacity:0;visibility:hidden;pointer-events:none;
+    transform:translateX(-16px) scale(.982);
+    transition:opacity .19s ease-out,
+               transform .3s cubic-bezier(.18,.86,.32,1),
+               visibility .3s;
+    background:var(--verre);border:1px solid var(--bord);border-radius:12px;
+    backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    box-shadow:0 22px 60px rgba(0,0,0,.72);padding:12px 13px 13px;
+  }
+  .fiche.on{opacity:1;visibility:visible;pointer-events:auto;transform:none}
+  .fiche h2{margin:0 22px 8px 0;font-size:12.5px;font-weight:600;line-height:1.35;word-break:break-word}
+  .badges{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
+  .badge{
+    display:inline-flex;align-items:center;gap:5px;padding:1px 9px;border-radius:999px;
+    font-size:10px;border:1px solid currentColor;opacity:.95;
+  }
+  .badge i{width:6px;height:6px;border-radius:50%;background:currentColor;flex:0 0 auto}
+  .meta{font-size:10.5px;color:var(--doux);margin-bottom:2px;font-variant-numeric:tabular-nums}
+  .chemin{
+    font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:9.5px;
+    color:#586780;word-break:break-all;margin-bottom:10px;line-height:1.5;
+  }
+  .fiche .acts{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:4px}
+  .fiche .acts .bt{flex:1 1 auto;padding:5px 7px;border:1px solid var(--bord);font-size:10.5px}
+  .cnx-titre{
+    font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--faible);
+    margin:12px 0 6px;
+  }
+  .cnx{max-height:190px;overflow:auto;margin:0 -4px}
+  .cnx button{
+    display:flex;align-items:center;gap:7px;width:100%;text-align:left;border:0;
+    background:transparent;padding:4px 5px;border-radius:6px;cursor:pointer;
+    font-size:11px;color:var(--doux);
+  }
+  .cnx button:hover{background:rgba(255,255,255,.07);color:var(--texte)}
+  .cnx i{width:6px;height:6px;border-radius:50%;flex:0 0 auto}
+  .cnx span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fermer{
+    position:absolute;top:8px;right:9px;width:20px;height:20px;border:0;border-radius:6px;
+    background:transparent;color:var(--faible);cursor:pointer;line-height:1;font-size:15px;
+  }
+  .fermer:hover{background:rgba(255,255,255,.08);color:var(--texte)}
+
+  /* ------------------------------------------------------------- messages */
+  .toast{
+    position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(8px);
+    background:rgba(12,16,25,.94);border:1px solid var(--bord);border-radius:999px;
+    padding:7px 18px;font-size:11.5px;color:var(--doux);opacity:0;
+    transition:opacity .16s,transform .16s;z-index:9;pointer-events:none;
+  }
+  .toast.on{opacity:1;transform:translateX(-50%)}
+  .vide{
+    position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    z-index:4;text-align:center;padding:30px;color:var(--doux);
+  }
+  .vide div{max-width:470px;line-height:1.65}
+  .vide code{
+    font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--orange);
+    background:rgba(255,157,77,.09);padding:2px 6px;border-radius:5px;
+  }
+
+  /* --------------------------------------------------- indicateur de pause */
+  .lig.pause > span:first-child{opacity:.42}
+  #rot-etat{color:var(--or);font-weight:600}
+
+  /* -------------------------------------------------- fil d'ariane (drill) */
+  .fildariane{
+    position:fixed;top:16px;left:50%;transform:translateX(-50%) translateY(-6px);z-index:8;
+    display:flex;align-items:center;gap:2px;flex-wrap:wrap;max-width:56vw;
+    background:var(--verre);border:1px solid var(--bord);border-radius:10px;
+    padding:5px 10px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    opacity:0;visibility:hidden;pointer-events:none;
+    transition:opacity .2s,transform .2s,visibility .2s;box-shadow:0 10px 30px rgba(0,0,0,.5);
+  }
+  .fildariane.on{opacity:1;visibility:visible;pointer-events:auto;transform:translateX(-50%)}
+  .fildariane button{
+    border:0;background:transparent;color:var(--doux);cursor:pointer;font-size:11.5px;
+    padding:2px 6px;border-radius:6px;white-space:nowrap;
+  }
+  .fildariane button:hover{background:rgba(255,255,255,.08);color:var(--texte)}
+  .fildariane button:last-of-type{color:var(--orange);font-weight:600}
+  .fildariane .sep{color:var(--faible);font-size:10px}
+
+  /* ---------------------------------------------------------- liseuse (lecture) */
+  .liseuse{
+    position:fixed;top:14px;left:14px;bottom:14px;z-index:8;
+    width:clamp(340px,44vw,600px);display:flex;flex-direction:column;
+    background:var(--verre);border:1px solid var(--bord);border-radius:14px;
+    backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    box-shadow:0 24px 70px rgba(0,0,0,.72);
+    opacity:0;visibility:hidden;pointer-events:none;
+    transform:translateX(-18px) scale(.99);
+    transition:opacity .2s ease-out,
+               transform .32s cubic-bezier(.18,.86,.32,1),visibility .32s;
+  }
+  .liseuse.on{opacity:1;visibility:visible;pointer-events:auto;transform:none}
+  .lz-tete{padding:14px 16px 11px;border-bottom:1px solid var(--bord);position:relative;flex:0 0 auto}
+  .lz-tete h2{margin:0 26px 7px 0;font-size:15px;font-weight:650;line-height:1.3;word-break:break-word}
+  .lz-badges{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:7px}
+  /* Bandeau « brouillon » de la liseuse : ambre franc, impossible à manquer. */
+  .lz-brouillon{display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+    margin:2px 0 8px;padding:7px 10px;border-radius:9px;
+    background:rgba(232,194,104,.14);border:1px solid rgba(232,194,104,.5)}
+  .lz-brouillon-txt{font-size:10.5px;font-weight:700;letter-spacing:.04em;
+    text-transform:uppercase;color:#f0cd77}
+  .lz-brouillon .bt{margin-left:auto;flex:0 0 auto;padding:5px 11px;font-size:10.5px;
+    font-weight:650;color:#0b0e14;background:#e8c268;border:1px solid #e8c268;border-radius:7px;cursor:pointer}
+  .lz-brouillon .bt:hover{background:#f0d488;border-color:#f0d488}
+  .lz-brouillon .bt:disabled{opacity:.55;cursor:default}
+  /* Compteur flottant « N brouillons » : discret, cliquable pour les lister. */
+  .brouillons-pill{position:fixed;top:14px;right:14px;z-index:7;
+    padding:6px 12px;border-radius:999px;font-size:11px;font-weight:650;
+    color:#f0cd77;background:rgba(232,194,104,.12);border:1px solid rgba(232,194,104,.5);
+    cursor:pointer;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+  .brouillons-pill:hover{background:rgba(232,194,104,.22)}
+  .lz-meta{font-size:10.5px;color:var(--doux);font-variant-numeric:tabular-nums;margin-bottom:3px}
+  .lz-chemin{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:9.5px;color:#586780;word-break:break-all}
+  .lz-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+  .lz-acts .bt{flex:0 1 auto;padding:5px 9px;border:1px solid var(--bord);font-size:10.5px}
+  .lz-corps{flex:1 1 auto;overflow:auto;padding:14px 18px 22px;font-size:13.5px;line-height:1.62;color:#dbe3f0}
+  .lz-corps::-webkit-scrollbar{width:9px}
+  .lz-corps::-webkit-scrollbar-thumb{background:rgba(126,168,216,.2);border-radius:6px}
+  .lz-charge{color:var(--faible);font-size:12px}
+  .lz-corps h1,.lz-corps h2,.lz-corps h3,.lz-corps h4,.lz-corps h5,.lz-corps h6{
+    line-height:1.28;font-weight:650;color:#f0f5fc;margin:1.25em 0 .5em}
+  .lz-corps h1{font-size:1.5em}
+  .lz-corps h2{font-size:1.26em;border-bottom:1px solid rgba(126,168,216,.15);padding-bottom:.2em}
+  .lz-corps h3{font-size:1.12em;color:var(--acier)}
+  .lz-corps h4{font-size:1em;color:var(--doux)}
+  .lz-corps p{margin:.55em 0}
+  .lz-corps ul,.lz-corps ol{margin:.5em 0;padding-left:1.45em}
+  .lz-corps li{margin:.24em 0}
+  .lz-corps strong{color:#fff;font-weight:660}
+  .lz-corps em{color:#e7d9ff;font-style:italic}
+  .lz-corps del{color:var(--faible)}
+  .lz-corps code{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:.86em;
+    background:rgba(126,168,216,.14);padding:1px 5px;border-radius:4px;color:#cfe0f5}
+  .lz-corps pre{background:rgba(6,9,15,.72);border:1px solid var(--bord);border-radius:9px;
+    padding:11px 13px;overflow-x:auto;margin:.8em 0}
+  .lz-corps pre code{background:none;padding:0;font-size:.82em;color:#c4d4ea;line-height:1.5}
+  .lz-corps blockquote{margin:.7em 0;padding:.15em 0 .15em 13px;border-left:3px solid rgba(126,168,216,.4);color:var(--doux)}
+  .lz-corps hr{border:0;border-top:1px solid rgba(126,168,216,.18);margin:1.3em 0}
+  .lz-corps a{color:#8fb8ea;text-decoration:none;border-bottom:1px solid rgba(143,184,234,.35)}
+  .lz-corps a:hover{color:#bcd6f7}
+  .lz-corps a.wl{color:var(--violet);border-bottom:1px dashed rgba(167,139,250,.55);cursor:pointer}
+  .lz-corps a.wl:hover{color:#c9b6ff;background:rgba(167,139,250,.12)}
+  .lz-corps .wl.cassee{color:#f87171;border-bottom:1px dashed rgba(248,113,113,.5);cursor:not-allowed}
+  .lz-corps table{border-collapse:collapse;width:100%;margin:.9em 0;font-size:.9em;display:block;overflow-x:auto}
+  .lz-corps th,.lz-corps td{border:1px solid rgba(126,168,216,.2);padding:6px 9px;text-align:left;vertical-align:top}
+  .lz-corps thead th{background:rgba(126,168,216,.12);color:#eaf1fb;font-weight:600}
+  .lz-corps tbody tr:nth-child(even){background:rgba(126,168,216,.045)}
+  .lz-corps .callout{margin:.9em 0;padding:9px 13px;border-radius:9px;border:1px solid rgba(126,168,216,.4);
+    border-left-width:3px;background:rgba(126,168,216,.06)}
+  .lz-corps .callout-t{font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin-bottom:4px}
+  .lz-corps .callout-warning,.lz-corps .callout-caution{border-color:rgba(232,194,104,.5);background:rgba(232,194,104,.08)}
+  .lz-corps .callout-warning .callout-t,.lz-corps .callout-caution .callout-t{color:var(--or)}
+  .lz-corps .callout-note .callout-t,.lz-corps .callout-info .callout-t{color:var(--acier)}
+  .lz-corps .callout-tip{border-color:rgba(74,222,128,.5);background:rgba(74,222,128,.07)}
+  .lz-corps .callout-tip .callout-t{color:var(--vert)}
+  .lz-corps .callout-important{border-color:rgba(167,139,250,.55);background:rgba(167,139,250,.08)}
+  .lz-corps .callout-important .callout-t{color:var(--violet)}
+  .lz-tronque{margin-top:14px;font-size:10.5px;color:var(--faible);font-style:italic}
+  .lz-pdf{font-size:11px;color:var(--doux);margin-bottom:8px}
+  .lz-extrait{white-space:pre-wrap;font-size:.85em;color:#c4d4ea}
+  .lz-vide{color:var(--faible)}
+  .lz-back{flex:0 0 auto;border-top:1px solid var(--bord);padding:10px 14px 12px;max-height:148px;overflow:auto}
+  .lz-back .t{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--faible);margin-bottom:6px}
+  .lz-back button{display:flex;align-items:center;gap:7px;width:100%;text-align:left;border:0;
+    background:transparent;padding:4px 5px;border-radius:6px;cursor:pointer;font-size:11px;color:var(--doux)}
+  .lz-back button:hover{background:rgba(255,255,255,.07);color:var(--texte)}
+  .lz-back i{width:6px;height:6px;border-radius:50%;flex:0 0 auto}
+  .lz-back span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  body.lecture .fiche{opacity:0!important;visibility:hidden!important;pointer-events:none!important}
+
+  /* ---------------------------------------------- panneau de résultats (recherche) */
+  .resultats{
+    position:fixed;top:56px;right:14px;width:262px;z-index:8;
+    max-height:calc(100vh - 78px);overflow-y:auto;overflow-x:hidden;
+    background:var(--verre);border:1px solid var(--bord);border-radius:12px;
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    box-shadow:0 18px 50px rgba(0,0,0,.6);padding:6px;display:none;
+  }
+  .resultats.on{display:block}
+  .resultats::-webkit-scrollbar{width:9px}
+  .resultats::-webkit-scrollbar-thumb{background:rgba(126,168,216,.2);border-radius:6px}
+  .res-tete{
+    font-size:9.5px;letter-spacing:1px;text-transform:uppercase;color:var(--faible);
+    padding:5px 7px 6px;
+  }
+  .res-tete.faible{color:var(--or)}
+  .res{
+    display:block;width:100%;text-align:left;border:1px solid transparent;
+    background:transparent;cursor:pointer;padding:7px 8px;border-radius:8px;color:var(--doux);
+  }
+  .res:hover{background:rgba(255,255,255,.06)}
+  .res.sel{background:rgba(255,157,77,.12);border-color:rgba(255,157,77,.4)}
+  .res-t{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+  .res-badge{
+    display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;max-width:118px;
+    font-size:9px;padding:1px 7px;border-radius:999px;border:1px solid currentColor;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .res-badge i{width:5px;height:5px;border-radius:50%;background:currentColor;flex:0 0 auto}
+  .res-titre{
+    flex:1 1 auto;font-size:11.5px;color:var(--texte);font-weight:600;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .res-score{font-size:9.5px;color:var(--faible);font-variant-numeric:tabular-nums;flex:0 0 auto}
+  .res-extrait{
+    font-size:10.5px;line-height:1.5;color:var(--faible);
+    max-height:4.5em;overflow:hidden;word-break:break-word;
+  }
+  .res-extrait strong{color:#f0f5fc;font-weight:660}
+  .res-vide{padding:8px;font-size:11px;color:var(--faible)}
+
+  /* ------------------------------------------ recherche dans la fiche (liseuse) */
+  .lz-trouver{display:flex;align-items:center;gap:6px;margin-top:9px}
+  .lz-trouver input{
+    flex:1 1 auto;min-width:0;background:rgba(6,9,15,.75);border:1px solid var(--bord);
+    border-radius:7px;padding:5px 8px;color:var(--texte);outline:none;font-size:11.5px;
+  }
+  .lz-trouver input:focus{border-color:rgba(255,157,77,.55);box-shadow:0 0 0 3px rgba(255,157,77,.08)}
+  .lz-trouver input::placeholder{color:#54617a}
+  .lz-compteur{font-size:10.5px;color:var(--faible);font-variant-numeric:tabular-nums;min-width:36px;text-align:center}
+  .lz-nav{
+    flex:0 0 auto;border:1px solid var(--bord);background:rgba(255,255,255,.045);color:var(--doux);
+    border-radius:6px;cursor:pointer;padding:4px 8px;font-size:11px;line-height:1;
+  }
+  .lz-nav:hover{background:rgba(255,255,255,.1);color:var(--texte)}
+  .lz-corps mark.lz-hit{background:rgba(232,194,104,.28);color:inherit;border-radius:2px;padding:0 1px}
+  .lz-corps mark.lz-hit.actif{background:rgba(255,157,77,.8);color:#0a0d14}
+</style>
+</head>
+<body>
+
+<canvas id="ciel"></canvas>
+
+<div class="entete">
+  <svg class="logo" viewBox="0 0 26 29" fill="none" aria-hidden="true">
+    <path d="M13 1.2 24.3 7.7v13l-11.3 6.5L1.7 20.7v-13z" stroke="#ff9d4d" stroke-width="1.5"/>
+    <path d="M13 7.4 19 10.9v6.9L13 21.3 7 17.8v-6.9z" stroke="rgba(255,157,77,.45)" stroke-width="1.1"/>
+    <circle cx="13" cy="14.3" r="2.1" fill="#ff9d4d"/>
+  </svg>
+  <div class="txt">
+    <b>SECOND CERVEAU</b>
+    <span>observatoire de la connaissance</span>
+  </div>
+</div>
+<a class="retour" id="retour" href="index.html">← Console</a>
+
+<aside class="panneau" id="panneau">
+  <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Rechercher…  ( / )">
+
+  <div class="rang" style="margin-top:9px">
+    <button class="bt" id="b-plein" title="Basculer le plein écran ( F )">⛶ Plein écran</button>
+  </div>
+
+  <div class="sec">Disposition</div>
+  <div class="rang" id="layouts">
+    <button class="bt" data-lay="circle">Cercle</button>
+    <button class="bt" data-lay="hex">Hex</button>
+    <button class="bt" data-lay="rings">Anneaux</button>
+    <button class="bt" data-lay="force">Force</button>
+  </div>
+
+  <div class="sec">Vue</div>
+  <div class="rang deux" id="vues">
+    <button class="bt" data-vue="sources">Sources</button>
+    <button class="bt" data-vue="dossiers">Dossiers</button>
+  </div>
+
+  <div class="lig" id="lig-rot"><span>Rotation<span id="rot-etat"></span></span><span class="val" id="v-rot">0,35</span></div>
+  <input type="range" id="s-rot" min="0" max="1" step="0.01" value="0.35">
+
+  <label class="coche"><input type="checkbox" id="c-noms"> Noms de fichiers</label>
+
+  <div class="lig"><span>Ressorts</span><span class="val" id="v-res">0,38</span></div>
+  <input type="range" id="s-res" min="0" max="1" step="0.01" value="0.38">
+
+  <div class="lig"><span>Taille</span><span class="val" id="v-tai">1,00</span></div>
+  <input type="range" id="s-tai" min="0.5" max="2" step="0.02" value="1">
+
+  <div class="sec">Galaxies</div>
+  <div class="rang deux">
+    <button class="bt" id="b-deployer">Tout déployer</button>
+    <button class="bt" id="b-replier">Tout replier</button>
+  </div>
+  <div class="rang deux" style="margin-top:6px">
+    <button class="bt" id="b-recentrer">Recentrer</button>
+    <button class="bt contour" id="b-figer">Figer</button>
+  </div>
+  <div class="compte" id="compte">chargement…</div>
+  <div class="compte" id="aide">Maj + glisser (ou clic droit) : pivoter · molette : zoomer</div>
+</aside>
+
+<!-- Panneau de résultats de recherche : coexiste avec la carte (comme la liseuse). -->
+<aside class="resultats" id="resultats" aria-label="Résultats de recherche"></aside>
+
+<div class="survol" id="survol"></div>
+
+<aside class="fiche" id="fiche">
+  <button class="fermer" id="fiche-fermer" title="Fermer">×</button>
+  <h2 id="f-titre"></h2>
+  <div class="badges" id="f-badges"></div>
+  <div class="meta" id="f-meta"></div>
+  <div class="chemin" id="f-chemin"></div>
+  <div class="acts">
+    <button class="bt" id="a-ouvrir">Ouvrir sur la machine</button>
+  </div>
+  <div class="acts">
+    <button class="bt" id="a-copier">Copier le chemin</button>
+    <button class="bt" id="a-voler">Voler jusqu’au nœud</button>
+  </div>
+  <div class="acts">
+    <button class="bt contour" id="a-explorer" style="display:none">Explorer la galaxie ▸</button>
+    <button class="bt" id="a-lire" style="display:none">Lire la fiche</button>
+  </div>
+  <div class="cnx-titre" id="f-cnx-titre" style="display:none">Connexions</div>
+  <div class="cnx" id="f-cnx"></div>
+</aside>
+
+<!-- Fil d'ariane du drill-down (Univers / galaxie / sous-amas / …) -->
+<nav class="fildariane" id="fildariane" aria-label="Navigation d’exploration"></nav>
+
+<!-- Liseuse : lecture d'une fiche rendue depuis son Markdown -->
+<aside class="liseuse" id="liseuse" aria-label="Lecture de la fiche">
+  <div class="lz-tete">
+    <button class="fermer" id="lz-fermer" title="Fermer (Échap)">×</button>
+    <h2 id="lz-titre"></h2>
+    <div class="lz-badges" id="lz-badges"></div>
+    <div class="lz-brouillon" id="lz-brouillon" style="display:none">
+      <span class="lz-brouillon-txt" id="lz-brouillon-txt">Brouillon — à relire</span>
+      <button class="bt" id="lz-promouvoir" title="Passer cette fiche en canon">✓ Promouvoir en canon</button>
+    </div>
+    <div class="lz-meta" id="lz-meta"></div>
+    <div class="lz-chemin" id="lz-chemin"></div>
+    <div class="lz-acts">
+      <button class="bt" id="lz-editer" title="Éditer le Markdown ici même">✎ Éditer ici</button>
+      <button class="bt" id="lz-editeur">Ouvrir dans l’éditeur</button>
+      <button class="bt" id="lz-finder">Révéler dans le Finder</button>
+      <button class="bt" id="lz-voler">Voler jusqu’au nœud</button>
+    </div>
+    <div class="lz-trouver">
+      <input id="lz-q" type="search" autocomplete="off" spellcheck="false" placeholder="Chercher dans la fiche…  (⌘F)">
+      <span class="lz-compteur" id="lz-compteur"></span>
+      <button class="lz-nav" id="lz-prec" title="Occurrence précédente (Maj+Entrée)">↑</button>
+      <button class="lz-nav" id="lz-suiv" title="Occurrence suivante (Entrée)">↓</button>
+    </div>
+  </div>
+  <div class="lz-corps" id="lz-corps"></div>
+  <div class="lz-back" id="lz-back" style="display:none">
+    <div class="t">Rétroliens — ces fiches pointent vers celle-ci</div>
+    <div id="lz-back-liste"></div>
+  </div>
+</aside>
+
+<div class="toast" id="toast"></div>
+<button class="brouillons-pill" id="brouillons-pill" style="display:none"
+        title="Lister les brouillons à relire"></button>
+<div class="vide" id="vide" style="display:none"><div id="vide-txt"></div></div>
+
+<!-- Jeton de session : remplacé à la volée par server.js. En file://, il reste
+     tel quel et la page bascule d'elle-même en mode dégradé. -->
+<script>window.__BRAIN_SESSION__ = { token: "__JETON_DE_SESSION__", port: "__PORT_DU_SERVEUR__" };</script>
+<!-- Mode dégradé : présent seulement après `node UI/server.js --snapshot`. -->
+<script src="data/snapshot.js"></script>
+<script>
+'use strict';
+(function () {
+
+/* ========================================================= socle & transport */
+
+var SERVI = location.protocol === 'http:' || location.protocol === 'https:';
+var JETON = (window.__BRAIN_SESSION__ && window.__BRAIN_SESSION__.token) || '';
+var HORS_LIGNE = window.__BRAIN__ || null;
+var MODE = SERVI ? 'relie' : (HORS_LIGNE ? 'degrade' : 'orphelin');
+
+/** XHR — jamais fetch : une page file:// ne sait pas fetcher son voisin. */
+function apiGet(chemin, params, ok, ko) {
+  var q = [], k;
+  for (k in params) if (params[k] !== undefined && params[k] !== null) {
+    q.push(encodeURIComponent(k) + '=' + encodeURIComponent(params[k]));
+  }
+  var x = new XMLHttpRequest();
+  x.open('GET', chemin + (q.length ? '?' + q.join('&') : ''), true);
+  x.setRequestHeader('X-Brain-Token', JETON);
+  x.onload = function () {
+    var d = null;
+    try { d = JSON.parse(x.responseText); } catch (e) { d = null; }
+    if (x.status >= 200 && x.status < 300) ok(d); else if (ko) ko(x.status, d);
+  };
+  x.onerror = function () { if (ko) ko(0, null); };
+  x.send();
+}
+
+function apiPost(chemin, corps, ok, ko) {
+  var x = new XMLHttpRequest();
+  x.open('POST', chemin, true);
+  x.setRequestHeader('X-Brain-Token', JETON);
+  x.setRequestHeader('Content-Type', 'application/json');
+  x.onload = function () {
+    var d = null;
+    try { d = JSON.parse(x.responseText); } catch (e) { d = null; }
+    if (x.status >= 200 && x.status < 300) ok(d); else if (ko) ko(x.status, d);
+  };
+  x.onerror = function () { if (ko) ko(0, null); };
+  x.send(JSON.stringify(corps));
+}
+
+function $(id) { return document.getElementById(id); }
+
+var minuterieToast = null;
+function toast(m) {
+  var t = $('toast');
+  t.textContent = m; t.classList.add('on');
+  if (minuterieToast) clearTimeout(minuterieToast);
+  minuterieToast = setTimeout(function () { t.classList.remove('on'); }, 2200);
+}
+
+/* ============================================================== géométrie */
+
+var R_SKILL = [62, 84, 106];
+var R_MEM0 = 150;
+var RA = { mem1: 520, routines: 660, apps: 840 };   // rayons effectifs des couches
+var R_SCENE = 800;
+var TAU = Math.PI * 2;
+
+function alea(graine) {
+  var t = graine >>> 0;
+  return function () {
+    t += 0x6D2B79F5;
+    var r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hexRgba(hex, a) {
+  var h = String(hex || '#8899aa').replace('#', '');
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  var n = parseInt(h, 16);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+}
+
+function eclaircir(hex, d) {
+  var h = String(hex).replace('#', '');
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  var n = parseInt(h, 16), k = d === undefined ? 55 : d;
+  return 'rgb(' + Math.min(255, ((n >> 16) & 255) + k) + ',' +
+    Math.min(255, ((n >> 8) & 255) + k) + ',' + Math.min(255, (n & 255) + k) + ')';
+}
+
+function ease(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
+
+/** Ressort léger : file droit vers 1 avec un très petit dépassement. */
+function ressort(t) {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  return 1 - Math.pow(2, -7.4 * t) * Math.cos(t * 7.6);
+}
+
+function borner(v, a, b) { return v < a ? a : (v > b ? b : v); }
+
+function courtLabel(s, n) {
+  s = String(s || '');
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+function nomFichier(id) { var p = String(id || '').split('/'); return p[p.length - 1]; }
+
+function octetsFr(n) {
+  if (!n && n !== 0) return '—';
+  if (n < 1024) return n + ' o';
+  if (n < 1048576) return (n / 1024).toFixed(1).replace('.', ',') + ' Ko';
+  return (n / 1048576).toFixed(1).replace('.', ',') + ' Mo';
+}
+
+function ageFr(iso) {
+  if (!iso) return null;
+  var d = new Date(iso);
+  if (isNaN(d)) return null;
+  var j = Math.floor((Date.now() - d.getTime()) / 86400000);
+  if (j <= 0) return 'aujourd’hui';
+  if (j === 1) return 'hier';
+  if (j < 60) return 'il y a ' + j + ' j';
+  if (j < 730) return 'il y a ' + Math.round(j / 30) + ' mois';
+  return 'il y a ' + Math.round(j / 365) + ' ans';
+}
+
+/* ================================================================== état */
+
+var etat = {
+  layout: 'circle', layoutPrec: 'circle', transT0: -1e9, transFin: 0,
+  vue: 'sources',
+  rotation: 0.35, noms: false, ressorts: 0.38, taille: 1,
+  zoom: 0.55, camx: 0, camy: 0, zoomBase: 0.55,
+  /* orientation de la scène : un SEUL angle. La carte est plate ; `angle`
+     fait pivoter tout le disque autour de son centre, dans le plan de
+     l'écran. Rien de volumétrique — pas de lacet, pas de tangage. */
+  angle: 0,
+  sceneR: 800,
+  zoomC: 0.55, camxC: 0, camyC: 0,        // cibles (inertie)
+  vol: null,
+  phase: 0,
+  survol: null, selection: null,
+  trouves: null,
+  replies: {},
+  chaudJusqua: 0,
+  derniereInteraction: 0,
+  /* drill-down récursif : pile de « frames » (une par niveau plongé). Vide =
+     vue d'ensemble. `galaxie` est le groupe plongé (racine de la pile). */
+  pile: [], galaxie: null, marqueurs: [],
+  drillAnim: false, drillT0: 0, drillMix: 1, dernierRemonte: 0, avantPlongee: null,
+  /* lecture : fiche actuellement ouverte dans la liseuse */
+  ficheLue: null,
+  /* recherche : panneau de résultats classés (plein texte) et sélection clavier */
+  resultats: null, selResultat: -1,
+  /* recherche intra-fiche : occurrences surlignées dans la liseuse */
+  lzHits: null, lzHitIdx: -1,
+  /* rotation automatique en pause (bascule au clic droit sans glisser) */
+  pauseRot: false,
+};
+
+var DUREE_TRANS = 680, ETALEMENT = 440, DUREE_VOL = 800;
+var ZOOM_MIN = 0.08, ZOOM_MAX = 26;
+
+/* ---------------------------------------------------- réglages persistés */
+
+var CLE = 'brain.univers.v2';
+
+function chargerReglages() {
+  var brut;
+  try { brut = window.localStorage.getItem(CLE); } catch (e) { return null; }
+  if (!brut) return null;
+  try { return JSON.parse(brut); } catch (e) { return null; }
+}
+
+function enregistrerReglages() {
+  var positions = {}, i, n, p;
+  for (i = 0; i < noeuds.length; i++) {
+    n = noeuds[i];
+    if (n.kind === 'fiche' || n.kind === 'hub') {
+      p = n.p.force;
+      if (p && p.x !== undefined) positions[n.id] = [
+        Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10,
+      ];
+    }
+  }
+  try {
+    window.localStorage.setItem(CLE, JSON.stringify({
+      layout: etat.layout, vue: etat.vue, rotation: etat.rotation,
+      noms: etat.noms, ressorts: etat.ressorts, taille: etat.taille,
+      zoom: etat.zoom, camx: etat.camx, camy: etat.camy,
+      angle: etat.angle,
+      replies: etat.replies, positions: positions,
+    }));
+    toast('Réglages et positions figés');
+  } catch (e) { toast('Stockage local indisponible'); }
+}
+
+/* ================================================================ données */
+
+var graphe = null, couches = null;
+var noeuds = [], ordre = [], parId = {}, groupes = [], parGroupe = {};
+var liens = [], voisins = {}, memoire = [];
+var COULEUR_SOURCE = {}, LIBELLE_SOURCE = {};
+var indexWiki = {};                                 // slug de fiche → [nœuds] (wikiliens)
+
+var GLYPHES_APP = {
+  // Optionnel : associe un glyphe à un nom de serveur MCP connu, pour le
+  // reconnaître d'un coup d'œil dans la vue « système ». Exemple :
+  //   github: 'G', slack: 'S'
+  // Les serveurs non listés reçoivent un glyphe par défaut.
+};
+
+function libelleApp(nom) {
+  return String(nom || '').replace(/^claude_ai_/, '').replace(/[_-]/g, ' ');
+}
+
+function glypheApp(nom) {
+  if (GLYPHES_APP[nom]) return GLYPHES_APP[nom];
+  if (/^claude_ai_/.test(nom)) {
+    if (/gmail/i.test(nom)) return 'M';
+    if (/drive/i.test(nom)) return 'triangle';
+    if (/calendar|calendrier/i.test(nom)) return 'calendrier';
+    if (/supermetrics/i.test(nom)) return 'S';
+    return 'etoile';
+  }
+  return (libelleApp(nom).charAt(0) || '?').toUpperCase();
+}
+
+function construire(g, c) {
+  graphe = g;
+  couches = c || { applications: [], routines: [], skills: [] };
+  (graphe.sources || []).forEach(function (s) {
+    COULEUR_SOURCE[s.id] = s.color || '#8899aa';
+    LIBELLE_SOURCE[s.id] = s.label || s.id;
+  });
+  reconstruireModele();
+}
+
+function ajouter(n) { noeuds.push(n); parId[n.id] = n; }
+
+function reconstruireModele() {
+  noeuds = []; parId = {}; groupes = []; parGroupe = {}; liens = []; voisins = {}; memoire = [];
+  indexWiki = {};
+  /* le modèle est recréé (nœuds neufs) : toute plongée/lecture en cours devient
+     caduque. On remonte à la vue d'ensemble proprement. */
+  etat.pile = []; etat.galaxie = null; etat.marqueurs = [];
+  etat.drillAnim = false; etat.drillMix = 1; etat.avantPlongee = null;
+  if (typeof fermerLiseuse === 'function') fermerLiseuse();
+  if (typeof majFilDariane === 'function') majFilDariane();
+  if (typeof majBoutonsGalaxie === 'function') majBoutonsGalaxie();
+
+  var racine = (graphe.sources && graphe.sources[0]) ? graphe.sources[0].root : '';
+  ajouter({
+    id: '#centre', kind: 'centre', label: 'CLAUDE.md', couleur: '#ff9d4d', z: 0,
+    r: 15, data: { chemin: racine ? racine + '/CLAUDE.md' : 'CLAUDE.md' }, p: {},
+  });
+
+  /* ------------------------------------------------------------- galaxies */
+  var index = {};
+  (graphe.nodes || []).forEach(function (n) {
+    var cle, lib;
+    if (etat.vue === 'dossiers') {
+      var reste = n.id.indexOf('/') >= 0 ? n.id.slice(n.id.indexOf('/') + 1) : n.id;
+      var seg = reste.indexOf('/') >= 0 ? reste.slice(0, reste.indexOf('/')) : '(racine)';
+      cle = n.source + '/' + seg;
+      lib = seg === '(racine)' ? (LIBELLE_SOURCE[n.source] || n.source) : seg;
+    } else {
+      cle = n.source;
+      lib = LIBELLE_SOURCE[n.source] || n.source;
+    }
+    if (!index[cle]) {
+      index[cle] = {
+        cle: cle, label: String(lib).toUpperCase(), source: n.source,
+        couleur: COULEUR_SOURCE[n.source] || '#8899aa', fiches: [],
+      };
+      groupes.push(index[cle]);
+    }
+    index[cle].fiches.push(n);
+  });
+
+  groupes.sort(function (a, b) { return b.fiches.length - a.fiches.length || (a.cle < b.cle ? -1 : 1); });
+
+  var poidsTotal = 0;
+  /* Poids en racine carrée : sinon un dossier de 34 fiches écrase huit dossiers
+     de deux, qui se retrouvent collés avec des étiquettes illisibles. */
+  groupes.forEach(function (g) {
+    g.poids = Math.max(Math.sqrt(g.fiches.length), 1.7);
+    poidsTotal += g.poids;
+  });
+
+  /* Les amas fixes (Routines ≈1.16, Skills ≈2.44, Applications ≈3.32 rad) occupent
+     le secteur gauche/bas. On le réserve : les galaxies mémoire se répartissent sur
+     l'arc LIBRE seulement, sinon une galaxie (Pangos) se colle à la ruche Applications
+     en disposition Force. arcLibre est réparti au prorata du poids de chaque galaxie. */
+  var RESERVE0 = 0.74, RESERVE1 = 3.80;
+  var arcLibre = TAU - (RESERVE1 - RESERVE0);
+  var angle = RESERVE1;
+  groupes.forEach(function (g, i) {
+    var span = arcLibre * g.poids / poidsTotal;
+    g.a0 = angle; g.a1 = angle + span; g.centreAngle = angle + span / 2;
+    angle += span;
+    parGroupe[g.cle] = g;
+    g.impair = (i % 2) === 1;
+
+    g.hub = {
+      id: '#hub:' + g.cle, kind: 'hub', label: g.label, couleur: g.couleur,
+      r: 9, groupe: g.cle, data: { nb: g.fiches.length, source: g.source },
+      p: {}, graine: i * 7919 + 13,
+    };
+    ajouter(g.hub);
+    memoire.push(g.hub);
+
+    g.fiches.sort(function (a, b) {
+      return (b.inbound - a.inbound) || (b.size - a.size) || (a.id < b.id ? -1 : 1);
+    });
+
+    var rn = alea(i * 104729 + 7);
+    g.fiches.forEach(function (f, j) {
+      var brut = f.zone === 'raw';
+      ajouter({
+        id: f.id, kind: 'fiche', label: f.label || nomFichier(f.id), fichier: nomFichier(f.id),
+        couleur: g.couleur, groupe: g.cle, brut: brut, zone: f.zone,
+        draft: (f.statut === 'draft'),
+        r: (brut ? 2.2 : 3.0) + Math.sqrt(Math.max(f.inbound, 0)) * 2.2 + Math.min(f.size / 8000, 2.1),
+        data: f, p: {}, rang: j, graine: (i * 131 + j) * 7919 % 2147483647,
+      });
+      memoire.push(parId[f.id]);
+    });
+  });
+
+  (graphe.links || []).forEach(function (l) {
+    var a = parId[l.source], b = parId[l.target];
+    if (!a || !b) return;
+    liens.push({ a: a, b: b, broken: !!l.broken });
+    (voisins[a.id] || (voisins[a.id] = [])).push(b.id);
+    (voisins[b.id] || (voisins[b.id] = [])).push(a.id);
+  });
+
+  (couches.skills || []).forEach(function (s, i) {
+    ajouter({
+      id: '#skill:' + s.name, kind: 'skill', label: s.name, couleur: '#ff9d4d',
+      z: ((i % 3) - 1) * 0.3, r: 4.4, data: s, p: {}, graine: i * 977 + 3,
+    });
+  });
+
+  (couches.routines || []).forEach(function (r, i) {
+    ajouter({
+      id: '#routine:' + r.name, kind: 'routine', label: r.name, couleur: '#e8c268',
+      z: ((i % 3) - 1) * 0.22, r: 8.5, data: r, p: {}, graine: i * 613 + 5,
+    });
+  });
+
+  (couches.applications || []).forEach(function (a, i) {
+    ajouter({
+      id: '#app:' + a.name, kind: 'app', label: libelleApp(a.name), couleur: '#7ea8d8',
+      z: ((i % 3) - 1) * 0.18, r: 34, data: a, glyphe: glypheApp(a.name), p: {}, graine: i * 389 + 11,
+    });
+  });
+
+  /* ordre de peinture STABLE (carte plate, plus de tri par profondeur) :
+     les fiches au fond, puis hubs et amas, le noyau par-dessus tout. */
+  var PRIO = { fiche: 0, skill: 1, routine: 2, hub: 3, app: 4, centre: 5 };
+  ordre = noeuds.slice().sort(function (a, b) {
+    return (PRIO[a.kind] || 0) - (PRIO[b.kind] || 0);
+  });
+
+  /* index des wikiliens : slug (nom de fichier sans extension) → fiche(s). Sert à
+     rendre cliquables les [[...]] du contenu, en préférant la même source. */
+  noeuds.forEach(function (n) {
+    if (n.kind !== 'fiche') return;
+    var b = nomFichier(n.id).replace(/\.[^.]+$/, '').toLowerCase();
+    (indexWiki[b] || (indexWiki[b] = [])).push(n);
+  });
+
+  calculerDispositions();
+  majCompte();
+}
+
+function majCompte() {
+  var nf = (graphe.nodes || []).length;
+  $('compte').textContent =
+    nf + ' fiches · ' + groupes.length + ' galaxies · ' +
+    (couches.skills || []).length + ' skills · ' +
+    (couches.routines || []).length + ' routines · ' +
+    (couches.applications || []).length + ' applications';
+  $('q').placeholder = 'Rechercher ' + nf + ' fichiers…  ( / )';
+}
+
+/* ============================================ dispositions (quatre layouts) */
+
+/* Ancrages des amas non mémoire en mode Force. Recalculés à chaque changement
+   de vue : leur distance suit la taille réelle des galaxies, sinon un petit
+   corpus donne une scène vide et un gros corpus une bouillie. */
+var ANCRE_SKILL = { x: -520, y: 420 };
+var ANCRE_ROUTINE = { x: 150, y: 660 };
+var ANCRE_APP = { x: -830, y: -20 };
+
+var ESP = 13;                                   // écartement typique entre fiches
+var ECHELLE_SKILL = 90, ECHELLE_ROUTINE = 60;
+function rayonAmas(n) { return 10 + 0.62 * Math.sqrt(Math.max(n, 1)) * ESP; }
+
+function spiraleHex(j) {
+  if (j === 0) return { q: 0, r: 0 };
+  var k = Math.floor((3 + Math.sqrt(9 + 12 * (j - 1))) / 6);
+  while (3 * k * (k + 1) + 1 <= j) k++;
+  while (k > 1 && 3 * (k - 1) * k + 1 > j) k--;
+  var debut = 3 * k * (k - 1) + 1;
+  var pos = j - debut;
+  var cote = Math.floor(pos / k), pas = pos % k;
+  var DIR = [[1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1], [1, 0]];
+  var d0 = DIR[(cote + 4) % 6], d1 = DIR[cote % 6];
+  return { q: d0[0] * k + d1[0] * pas, r: d0[1] * k + d1[1] * pas };
+}
+
+function calculerDispositions() {
+  var i, n;
+
+  /* ------- échelle de la scène en mode Force, déduite du corpus réel ------- */
+  var rMax = 0;
+  groupes.forEach(function (g) {
+    var somme = 0;
+    for (var j = 0; j < g.fiches.length; j++) somme += parId[g.fiches[j].id].r;
+    var esp = 2 * (somme / Math.max(g.fiches.length, 1) * 1.35 + 2.2);
+    g.rayon = 12 + 0.62 * Math.sqrt(g.fiches.length) * esp;
+    if (g.rayon > rMax) rMax = g.rayon;
+  });
+  /* Rayon de l'anneau des galaxies : assez large pour qu'à écart angulaire égal
+     l'écart PHYSIQUE entre deux galaxies dépasse la somme de leurs rayons — sinon
+     Vente et Game-dev (les deux plus grosses) se touchent. La toile est vaste,
+     on peut pousser au large sans gêner. */
+  var sommeRayons = 0;
+  groupes.forEach(function (g) { sommeRayons += g.rayon; });
+  var Rg = Math.max(rMax * 1.15 + 160, sommeRayons * 0.9 + 120);
+  /* Les galaxies ne sont plus toutes sur un même cercle : leur distance au
+     noyau varie (les plus grosses au large). Une fois la scène enroulée sur
+     la coquille, cette variation devient une variation de LATITUDE — c'est
+     ce qui répartit vraiment les galaxies sur la sphère plutôt qu'en collier. */
+  var nbG = Math.max(groupes.length - 1, 1);
+  groupes.forEach(function (g, i) {
+    g.Rg = Rg * (1.10 - 0.26 * (i / nbG));
+    g.fx = Math.cos(g.centreAngle) * g.Rg;
+    g.fy = Math.sin(g.centreAngle) * g.Rg;
+  });
+  var nbSk = 0, nbRo = 0;
+  for (i = 0; i < noeuds.length; i++) {
+    if (noeuds[i].kind === 'skill') nbSk++;
+    else if (noeuds[i].kind === 'routine') nbRo++;
+  }
+  var rSk = rayonAmas(nbSk), rRo = rayonAmas(nbRo);
+  ANCRE_SKILL.x = Math.cos(2.44) * (Rg + rSk + 175);
+  ANCRE_SKILL.y = Math.sin(2.44) * (Rg + rSk + 175);
+  ANCRE_ROUTINE.x = Math.cos(1.16) * (Rg + rRo + 195);
+  ANCRE_ROUTINE.y = Math.sin(1.16) * (Rg + rRo + 195);
+  ANCRE_APP.x = Math.cos(3.32) * (Rg + 275);
+  ANCRE_APP.y = Math.sin(3.32) * (Rg + 275);
+  ECHELLE_SKILL = rSk; ECHELLE_ROUTINE = rRo;
+
+  var c = parId['#centre'];
+  c.p.force = { x: 0, y: 0 }; c.p.circle = { x: 0, y: 0 };
+  c.p.hex = { x: 0, y: 0 }; c.p.rings = { x: 0, y: 0, plat: 1 };
+
+  /* -------- skills : trois anneaux fins en rotation */
+  var sk = [];
+  for (i = 0; i < noeuds.length; i++) if (noeuds[i].kind === 'skill') sk.push(noeuds[i]);
+  var total = sk.length, cap = [1, 1, 1];
+  if (total) {
+    var somme = R_SKILL[0] + R_SKILL[1] + R_SKILL[2];
+    cap[0] = Math.max(1, Math.round(total * R_SKILL[0] / somme));
+    cap[1] = Math.max(1, Math.round(total * R_SKILL[1] / somme));
+    cap[2] = Math.max(1, total - cap[0] - cap[1]);
+  }
+  var k = 0;
+  for (var an = 0; an < 3; an++) {
+    for (i = 0; i < cap[an] && k < total; i++, k++) {
+      n = sk[k];
+      var ra0 = R_SKILL[an], aa0 = (i / cap[an]) * TAU + an * 0.31, sp0 = an % 2 ? -0.62 : 0.9;
+      n.p.circle = { r: ra0, a: aa0, spin: sp0 };
+      n.p.hex = { r: ra0, a: aa0, spin: sp0 };
+      /* en Anneaux les orbites restent PLATES : c'est le tangage global qui
+         les incline et leur donne l'ellipse d'un système planétaire. */
+      n.p.rings = { r: ra0, a: aa0, spin: sp0, plat: 1 };
+      var rn = alea(n.graine);
+      var ra = rn() * TAU, rr = ECHELLE_SKILL * (0.16 + Math.sqrt(rn()) * 0.98);
+      n.p.force = { x: ANCRE_SKILL.x + Math.cos(ra) * rr, y: ANCRE_SKILL.y + Math.sin(ra) * rr * 0.8 };
+    }
+  }
+
+  /* -------- galaxies mémoire ------------------------------------------------
+     Les rayons des couches ne sont PAS figés : ils suivent l'encombrement réel
+     des galaxies. Un corpus de 120 fiches ne doit pas flotter au milieu d'un
+     anneau prévu pour 35 000. */
+  var espace = 15, pasH = espace * 0.78, rEnc = 0;
+  groupes.forEach(function (g) {
+    var nb = g.fiches.length, idx = 0, a = 1, Rc = 0;
+    while (idx < nb) {
+      Rc = a * espace * 1.4;
+      idx += Math.max(3, Math.floor(TAU * Rc / espace));
+      a++;
+    }
+    var k = Math.ceil((Math.sqrt(Math.max(12 * nb - 3, 1)) - 3) / 6);
+    g.rCercle = Math.max(Rc, k * pasH * 1.9, 24);
+    if (g.rCercle > rEnc) rEnc = g.rCercle;
+  });
+  var Rcircle = R_MEM0 + rEnc * 1.02;
+  var rMemMax = Rcircle + rEnc;
+
+  groupes.forEach(function (g) {
+    var ang = g.centreAngle, Rg = Rcircle;
+    g.cx = Math.cos(ang) * Rg; g.cy = Math.sin(ang) * Rg;
+    var nb = g.fiches.length;
+
+    g.hub.p.circle = { x: g.cx, y: g.cy };
+    g.hub.p.hex = { x: g.cx, y: g.cy };
+    g.hub.p.rings = { r: R_MEM0 - 16, a: ang, spin: -0.3, plat: 1 };
+
+    /* Cercle */
+    var idx = 0, aC = 1;
+    while (idx < nb) {
+      var Rc = aC * espace * 1.4;
+      var capa = Math.max(3, Math.floor(TAU * Rc / espace));
+      for (var q = 0; q < capa && idx < nb; q++, idx++) {
+        var nf = parId[g.fiches[idx].id];
+        var aa = ang + (q / capa) * TAU;
+        nf.p.circle = { x: g.cx + Math.cos(aa) * Rc, y: g.cy + Math.sin(aa) * Rc };
+      }
+      aC++;
+    }
+
+    /* Hex */
+    g.fiches.forEach(function (f, j) {
+      var h = spiraleHex(j), nn = parId[f.id];
+      nn.p.hex = {
+        x: g.cx + pasH * 1.5 * h.q,
+        y: g.cy + pasH * Math.sqrt(3) * (h.r + h.q / 2),
+      };
+    });
+
+    /* --- Anneaux : bande d'arcs concentriques, une par galaxie ---
+       Le nombre de rangées est choisi pour que la bande couvre une bonne part
+       de la zone mémoire : avec peu de fiches, une seule rangée large donnerait
+       un cercle vide au lieu des arcs serrés des références. */
+    var pasA = 16, pasR = 18;                        // écarts arc / radial
+    var cible = Math.max(3, Math.min(18, Math.round(Math.sqrt(nb) * 0.95)));
+    var somme = 0;
+    for (var q2 = 0; q2 < cible; q2++) somme += R_MEM0 + q2 * pasR;
+    /* demi-ouverture de la bande : calée pour obtenir ~cible rangées pleines */
+    var demi = Math.max(0.11, Math.min(nb * pasA / (2 * somme), (g.a1 - g.a0) * 0.47));
+    var aC2 = g.centreAngle;
+    var pris = 0, rg = 0;
+    while (pris < nb && rg < 260) {
+      var Rr = R_MEM0 + rg * pasR;
+      var np = Math.max(2, Math.round(2 * demi * Rr / pasA));
+      for (var t = 0; t < np && pris < nb; t++, pris++) {
+        var frac = np === 1 ? 0.5 : t / (np - 1);
+        var nf2 = parId[g.fiches[pris].id];
+        nf2.p.rings = { r: Rr, a: aC2 - demi + frac * demi * 2, spin: -0.34, plat: 1 };
+        nf2.gradTaille = 1.2 - 0.4 * Math.min(rg / 9, 1);
+      }
+      rg++;
+    }
+    if (R_MEM0 + rg * pasR > rMemMax) rMemMax = R_MEM0 + rg * pasR;
+  });
+
+  /* ---- rayons des couches externes, proportionnés à la zone mémoire ---- */
+  RA.mem1 = Math.max(rMemMax + 16, R_SKILL[2] + 90);
+  RA.routines = RA.mem1 * 1.24;
+  RA.apps = RA.mem1 * 1.54;
+
+  /* -------- routines : planètes régulièrement espacées sur l'anneau doré */
+  var ro = [];
+  for (i = 0; i < noeuds.length; i++) if (noeuds[i].kind === 'routine') ro.push(noeuds[i]);
+  ro.forEach(function (x, j) {
+    var ar = -Math.PI / 2 + (j / Math.max(ro.length, 1)) * TAU;
+    x.p.circle = { r: RA.routines, a: ar, spin: 0.42 };
+    x.p.hex = { r: RA.routines, a: ar, spin: 0.42 };
+    x.p.rings = { r: RA.routines, a: ar, spin: 0.42, plat: 1 };
+    var rn = alea(x.graine);
+    var ra = rn() * TAU, rr = ECHELLE_ROUTINE * (0.2 + Math.sqrt(rn()) * 0.9);
+    x.p.force = { x: ANCRE_ROUTINE.x + Math.cos(ra) * rr, y: ANCRE_ROUTINE.y + Math.sin(ra) * rr * 0.8 };
+  });
+
+  /* -------- applications : hexagones sur l'anneau d'acier */
+  var ap = [];
+  for (i = 0; i < noeuds.length; i++) if (noeuds[i].kind === 'app') ap.push(noeuds[i]);
+  ap.forEach(function (x, j) {
+    var aa = -Math.PI / 2 + (j / Math.max(ap.length, 1)) * TAU;
+    x.p.circle = { r: RA.apps, a: aa, spin: -0.19 };
+    x.p.hex = { r: RA.apps, a: aa, spin: -0.19 };
+    x.p.rings = { r: RA.apps, a: aa, spin: -0.19, plat: 1 };
+    /* nid d'abeille compact : hexagones pointe en haut, côtés jointifs */
+    var h = spiraleHex(j), pas = 44;
+    x.p.force = {
+      x: ANCRE_APP.x + pas * Math.sqrt(3) * (h.q + h.r / 2),
+      y: ANCRE_APP.y + pas * 1.5 * h.r,
+    };
+  });
+
+  /* ---- rayon de scène : sert d'unité au cadrage et au voile central.
+         Il englobe les anneaux ET les amas du mode Force. */
+  var hyp = function (a, b) { return Math.sqrt(a * a + b * b); };
+  etat.sceneR = Math.max(
+    RA.apps,
+    hyp(ANCRE_SKILL.x, ANCRE_SKILL.y) + ECHELLE_SKILL,
+    hyp(ANCRE_ROUTINE.x, ANCRE_ROUTINE.y) + ECHELLE_ROUTINE,
+    hyp(ANCRE_APP.x, ANCRE_APP.y) + 220,
+    Rg * 1.10 + rMax,
+    260
+  );
+
+  /* respiration des galaxies (±2 %), déphasée par l'angle d'or */
+  groupes.forEach(function (g, i) {
+    g.respPhase = (i * 2.399963) % TAU;
+    g.resp = 1;
+  });
+
+  initialiserForce();
+  simuler(320, 1);
+}
+
+/* --------------------------------------------------------- mini-simulation */
+
+function initialiserForce() {
+  var sauve = (reglages && reglages.positions) || null;
+  memoire.forEach(function (n) {
+    var g = parGroupe[n.groupe];
+    if (sauve && sauve[n.id]) {
+      /* positions figées : (x, y). On tolère un ancien 3e nombre (z) — ignoré. */
+      var s = sauve[n.id];
+      n.p.force = { x: s[0], y: s[1], fige: 1 };
+    }
+    else if (n.kind === 'hub') n.p.force = { x: g.fx, y: g.fy };
+    else {
+      var rn = alea(n.graine);
+      var a = rn() * TAU, r = 6 + Math.sqrt(rn()) * g.rayon;
+      n.p.force = { x: g.fx + Math.cos(a) * r, y: g.fy + Math.sin(a) * r };
+    }
+    n.vx = 0; n.vy = 0;
+  });
+}
+
+/**
+ * Répulsion + résolution de collisions par grille uniforme : O(n), écrit pour
+ * tenir à 3 000 nœuds. La collision (distance minimale = somme des rayons) est
+ * ce qui donne l'AMAS DENSE des captures ; une répulsion seule laisse des trous.
+ */
+function repulsion(alpha) {
+  var cell = 34, i, n;
+  var map = Object.create(null);
+  for (i = 0; i < memoire.length; i++) {
+    n = memoire[i];
+    var p = n.p.force;
+    n._cx = Math.floor(p.x / cell); n._cy = Math.floor(p.y / cell);
+    var cle = n._cx + ':' + n._cy;
+    (map[cle] || (map[cle] = [])).push(n);
+  }
+  for (i = 0; i < memoire.length; i++) {
+    n = memoire[i];
+    var pn = n.p.force;
+    var rn = n.kind === 'hub' ? n.r * 1.9 : n.r * 1.35 + 2.2;
+    for (var dx = -1; dx <= 1; dx++) for (var dy = -1; dy <= 1; dy++) {
+      var vg = map[(n._cx + dx) + ':' + (n._cy + dy)];
+      if (!vg) continue;
+      for (var j = 0; j < vg.length; j++) {
+        var m = vg[j];
+        if (m === n) continue;
+        var pm = m.p.force;
+        var ex = pn.x - pm.x, ey = pn.y - pm.y;
+        var d2 = ex * ex + ey * ey;
+        if (d2 === 0) { ex = 0.4; ey = -0.3; d2 = 0.25; }
+        var d = Math.sqrt(d2);
+        var dmin = rn + (m.kind === 'hub' ? m.r * 1.9 : m.r * 1.35 + 2.2);
+        if (d < dmin) {
+          /* correction de position immédiate (dynamique par positions) */
+          var corr = (dmin - d) * 0.5 * Math.min(alpha * 2.4, 1);
+          pn.x += (ex / d) * corr; pn.y += (ey / d) * corr;
+          pm.x -= (ex / d) * corr; pm.y -= (ey / d) * corr;
+        } else if (n.kind === 'hub' || m.kind === 'hub') {
+          var f = Math.min(900 / d2, 4);
+          n.vx += (ex / d) * f * alpha; n.vy += (ey / d) * f * alpha;
+        }
+      }
+    }
+  }
+}
+
+function pas(alpha) {
+  var i, n, g, p;
+  for (i = 0; i < memoire.length; i++) {
+    n = memoire[i];
+    if (n.kind !== 'fiche') continue;
+    g = parGroupe[n.groupe]; p = n.p.force;
+    var ph = g.hub.p.force;
+    var dx = ph.x - p.x, dy = ph.y - p.y;
+    var d = Math.sqrt(dx * dx + dy * dy) || 0.001;
+    /* Attraction LINÉAIRE vers le hub (pas de longueur au repos) : combinée à
+       la répulsion, elle donne un amas PLEIN — une longueur au repos donnerait
+       un anneau creux, ce que les captures ne montrent pas. */
+    var f = d * 0.013;
+    n.vx += (dx / d) * f * alpha; n.vy += (dy / d) * f * alpha;
+  }
+
+  var kl = 0.035 * etat.ressorts;
+  for (i = 0; i < liens.length; i++) {
+    var a = liens[i].a, b = liens[i].b;
+    if (!a.p.force || !b.p.force) continue;
+    var pa = a.p.force, pb = b.p.force;
+    var lx = pb.x - pa.x, ly = pb.y - pa.y;
+    var ld = Math.sqrt(lx * lx + ly * ly) || 0.001;
+    var lf = (ld - 58) * kl;
+    a.vx += (lx / ld) * lf * alpha; a.vy += (ly / ld) * lf * alpha;
+    b.vx -= (lx / ld) * lf * alpha; b.vy -= (ly / ld) * lf * alpha;
+  }
+
+  repulsion(alpha);
+
+  for (i = 0; i < memoire.length; i++) {
+    n = memoire[i];
+    if (n.kind !== 'hub') continue;
+    g = parGroupe[n.groupe]; p = n.p.force;
+    n.vx += (g.fx - p.x) * 0.03 * alpha;
+    n.vy += (g.fy - p.y) * 0.03 * alpha;
+  }
+
+  for (i = 0; i < memoire.length; i++) {
+    n = memoire[i]; p = n.p.force;
+    n.vx *= 0.80; n.vy *= 0.80;
+    var v = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+    if (v > 12) { n.vx *= 12 / v; n.vy *= 12 / v; }
+    p.x += n.vx; p.y += n.vy;
+  }
+}
+
+function simuler(iterations, alpha0) {
+  var alpha = alpha0;
+  for (var it = 0; it < iterations; it++) { pas(alpha); alpha *= 0.985; }
+}
+
+/* ==================================================== résolution de position */
+
+var _pa3 = { x: 0, y: 0, z: 0 }, _pb3 = { x: 0, y: 0, z: 0 };
+var _w3 = { x: 0, y: 0, z: 0 }, _pr = { x: 0, y: 0, z: 0, k: 1 };
+var _e3 = { x: 0, y: 0, z: 0, k: 1, d: 0 };
+
+function resoudre(n, lay, phase, out) {
+  var e = n.p[lay];
+  if (!e) { out.x = 0; out.y = 0; out.z = 0; return out; }
+  var x, y;
+  if (e.r !== undefined) {
+    /* orbites CIRCULAIRES vues de face : `phase·spin` fait tourner lentement
+       chaque anneau (rotation différentielle), toujours dans le plan. */
+    var a = e.a + phase * e.spin;
+    x = e.r * Math.cos(a); y = e.r * Math.sin(a);
+  } else { x = e.x; y = e.y; }
+  out.x = x; out.y = y; out.z = 0;
+  return out;
+}
+
+/** Avancement de la transition POUR CE NŒUD : retard proportionnel à sa
+    distance au centre → la nouvelle disposition part en vague du noyau. */
+function avanceeTrans(n, now) {
+  if (now >= etat.transFin) return 1;
+  return ressort((now - etat.transT0 - (n.retard || 0)) / DUREE_TRANS);
+}
+
+function positionner(n, phase, now, out) {
+  if (etat.layout === etat.layoutPrec) return resoudre(n, etat.layout, phase, out);
+  var m = avanceeTrans(n, now);
+  if (m >= 1) return resoudre(n, etat.layout, phase, out);
+  if (m <= 0) return resoudre(n, etat.layoutPrec, phase, out);
+  resoudre(n, etat.layoutPrec, phase, _pa3);
+  resoudre(n, etat.layout, phase, _pb3);
+  var dx = _pb3.x - _pa3.x, dy = _pb3.y - _pa3.y;
+  out.x = _pa3.x + dx * m;
+  out.y = _pa3.y + dy * m;
+  /* Arc « spiralé » : chaque nœud rejoint sa place par une COURBE, pas une ligne
+     droite — la galaxie semble se reformer en tourbillon plutôt que de glisser. La
+     flèche perpendiculaire (normale +90° au trajet, sens de rotation cohérent pour
+     tous → l'ensemble pivote) culmine à mi-parcours (sin) et s'annule EXACTEMENT aux
+     deux bouts : les positions de départ et d'arrivée restent au pixel près. */
+  var raw = borner((now - etat.transT0 - (n.retard || 0)) / DUREE_TRANS, 0, 1);
+  var bump = Math.sin(raw * Math.PI);
+  if (bump > 0.0001) {
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > 1e-3) {
+      var amp = Math.min(dist * 0.17, 130) * bump;   // ∝ longueur du trajet, plafonné
+      out.x += (-dy / dist) * amp;
+      out.y += (dx / dist) * amp;
+    }
+  }
+  out.z = 0;
+  return out;
+}
+
+/* ============================================================ caméra & plan */
+
+var cv = $('ciel'), ctx = cv.getContext('2d');
+var L = 0, H = 0, DPR = 1;
+
+/* cosinus/sinus de l'angle du plan, rafraîchis une fois par frame */
+var CA = 1, SA = 0;
+
+function majOrientation() {
+  CA = Math.cos(etat.angle); SA = Math.sin(etat.angle);
+}
+
+/**
+ * PROJECTION PLATE. Plus de perspective ni de profondeur : le monde est un
+ * plan qu'on fait simplement PIVOTER autour de son centre, dans le plan de
+ * l'écran. `k` reste à 1 (aucune décroissance avec la distance), `z` à 0.
+ */
+function projeter(x, y, z, out) {
+  out.x = x * CA - y * SA;
+  out.y = x * SA + y * CA;
+  out.z = 0; out.k = 1;
+  return out;
+}
+
+/** Coordonnées projetées → écran (pan/zoom du plan). */
+function versEcran(wx, wy, par) {
+  var p = par === undefined ? 1 : par;
+  return {
+    x: (wx - etat.camx) * etat.zoom * p + L / 2,
+    y: (wy - etat.camy) * etat.zoom * p + H / 2,
+  };
+}
+
+function versMonde(sx, sy) {
+  return { x: (sx - L / 2) / etat.zoom + etat.camx, y: (sy - H / 2) / etat.zoom + etat.camy };
+}
+
+/** Point du plan de composition → écran (pivot + pan/zoom). */
+function ecranPlan(x, y, z, tx, out) {
+  projeter(x, y, 0, _pr);
+  out.x = (_pr.x - etat.camx) * etat.zoom + L / 2;
+  out.y = (_pr.y - etat.camy) * etat.zoom + H / 2;
+  out.z = 0; out.k = 1;
+  return out;
+}
+
+function majCamera(dt) {
+  if (etat.vol) {
+    var v = etat.vol;
+    var t = Math.min((performance.now() - v.t0) / v.duree, 1);
+    var e = ease(t);
+    etat.camx = v.x0 + (v.x1 - v.x0) * e;
+    etat.camy = v.y0 + (v.y1 - v.y0) * e;
+    etat.zoom = Math.exp(Math.log(v.z0) + (Math.log(v.z1) - Math.log(v.z0)) * e);
+    etat.camxC = etat.camx; etat.camyC = etat.camy; etat.zoomC = etat.zoom;
+    if (t >= 1) etat.vol = null;
+    return true;
+  }
+  var k = 1 - Math.pow(0.0016, dt);       // amortissement doux, indépendant du dt
+  var dz = etat.zoomC / etat.zoom;
+  var bouge = Math.abs(Math.log(dz)) > 0.0006 ||
+    Math.abs(etat.camxC - etat.camx) * etat.zoom > 0.25 ||
+    Math.abs(etat.camyC - etat.camy) * etat.zoom > 0.25;
+  if (!bouge) { etat.zoom = etat.zoomC; etat.camx = etat.camxC; etat.camy = etat.camyC; return false; }
+  etat.zoom = Math.exp(Math.log(etat.zoom) + Math.log(dz) * k);
+  etat.camx += (etat.camxC - etat.camx) * k;
+  etat.camy += (etat.camyC - etat.camy) * k;
+  return true;
+}
+
+function volerVers(x, y, zoom, duree) {
+  etat.vol = {
+    t0: performance.now(), duree: duree || DUREE_VOL,
+    x0: etat.camx, y0: etat.camy, z0: etat.zoom,
+    x1: x, y1: y, z1: Math.min(Math.max(zoom, ZOOM_MIN), ZOOM_MAX),
+  };
+  reveiller();
+}
+
+function volerVersNoeud(n) {
+  if (!n) return;
+  majOrientation();
+  resoudre(n, etat.layout, etat.phase, _w3);
+  projeter(_w3.x, _w3.y, _w3.z, _pr);
+  var z;
+  if (n.kind === 'hub') {
+    var g = parGroupe[n.groupe];
+    z = Math.max(1.1, Math.min(3.6, 260 / (24 + Math.sqrt(g.fiches.length) * 16)));
+  } else if (n.kind === 'app') z = 3.2;
+  else if (n.kind === 'centre') z = 2.2;
+  else z = Math.max(2.5, Math.min(16, 70 / Math.max(n.r, 2)));
+  volerVers(_pr.x, _pr.y, z);
+}
+
+/** Boîte englobante du layout courant, une fois PROJETÉ (marge comprise). */
+function contenu() {
+  var x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, n;
+  majOrientation();
+  for (var i = 0; i < noeuds.length; i++) {
+    n = noeuds[i];
+    if (n.cache) continue;
+    resoudre(n, etat.layout, etat.phase, _w3);
+    projeter(_w3.x, _w3.y, _w3.z, _pr);
+    var m = (n.r + (n.kind === 'app' ? 34 : 18)) * _pr.k;
+    if (_pr.x - m < x0) x0 = _pr.x - m;
+    if (_pr.y - m < y0) y0 = _pr.y - m;
+    if (_pr.x + m > x1) x1 = _pr.x + m;
+    if (_pr.y + m > y1) y1 = _pr.y + m;
+  }
+  if (x0 > x1) return { x: 0, y: 0, w: R_SCENE * 2, h: R_SCENE * 2 };
+  return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 };
+}
+
+/** Largeur réellement libre : le panneau flottant de droite masque 296 px. */
+function PANNEAU() { return L > 900 ? 296 : 0; }
+
+/** Cadrage sur l'ensemble de la scène (bouton « Recentrer », démarrage). */
+function cadrerSurContenu(anime) {
+  var b = contenu();
+  var libre = Math.max(L - PANNEAU(), 200);
+  var z = Math.min(libre / b.w, H / b.h) * 0.94;
+  z = Math.min(Math.max(z, ZOOM_MIN), ZOOM_MAX);
+  etat.zoomBase = z;
+  var cx = b.x + (PANNEAU() / 2) / z;      // recentre dans la zone visible
+  if (anime) volerVers(cx, b.y, z, 700);
+  else {
+    etat.camx = etat.camxC = cx; etat.camy = etat.camyC = b.y;
+    etat.zoom = etat.zoomC = z;
+  }
+}
+
+function recentrer() { cadrerSurContenu(true); }
+
+/** Recalcule seulement le zoom de référence (sans bouger la caméra). */
+function majZoomBase() {
+  if (!noeuds.length || !L || !H) return;
+  var b = contenu();
+  var libre = Math.max(L - PANNEAU(), 200);
+  etat.zoomBase = Math.min(Math.max(Math.min(libre / b.w, H / b.h) * 0.94, ZOOM_MIN), ZOOM_MAX);
+}
+
+/* ================================================================== rendu */
+
+var etoiles = [];
+
+function dimensionner() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  L = cv.clientWidth; H = cv.clientHeight;
+  cv.width = Math.round(L * DPR); cv.height = Math.round(H * DPR);
+  majZoomBase();
+  reveiller();
+}
+
+/* Trois nappes d'étoiles à parallaxes distinctes : le fond lointain bouge à
+   peine, la nappe proche file. Chacune scintille sur sa propre sinusoïde,
+   déphasée par étoile — le ciel n'est jamais tout à fait le même. */
+var NAPPES = [
+  { par: 0.24, nb: 260, taille: [0.5, 0.9], eclat: [0.030, 0.10], vit: 0.5 },
+  { par: 0.52, nb: 220, taille: [0.7, 1.3], eclat: [0.055, 0.17], vit: 0.9 },
+  { par: 0.88, nb: 130, taille: [0.9, 1.9], eclat: [0.085, 0.26], vit: 1.5 },
+];
+
+function genererEtoiles() {
+  var rn = alea(20260807);
+  etoiles = [];
+  for (var c = 0; c < NAPPES.length; c++) {
+    var L0 = NAPPES[c];
+    for (var i = 0; i < L0.nb; i++) {
+      var a = rn() * TAU, r = 60 + Math.sqrt(rn()) * 1900;
+      etoiles.push({
+        x: Math.cos(a) * r, y: Math.sin(a) * r, par: L0.par,
+        t: L0.taille[0] + rn() * (L0.taille[1] - L0.taille[0]),
+        o: L0.eclat[0] + rn() * (L0.eclat[1] - L0.eclat[0]),
+        ph: rn() * TAU, vt: L0.vit * (0.65 + rn() * 0.9),
+      });
+    }
+  }
+}
+
+/* ------------------------------------------------- étoile filante discrète */
+
+var filante = null, prochaineFilante = 0;
+
+function majFilante(now, eveille) {
+  if (!prochaineFilante) prochaineFilante = now + 9000 + Math.random() * 12000;
+  if (!filante && eveille && now > prochaineFilante) {
+    var bord = Math.random();
+    filante = {
+      t0: now, duree: 700 + Math.random() * 500,
+      x0: (0.05 + bord * 0.7) * L, y0: -30 - Math.random() * 60,
+      dx: (0.16 + Math.random() * 0.34) * L * (Math.random() < 0.5 ? -1 : 1),
+      dy: (0.42 + Math.random() * 0.5) * H,
+    };
+    prochaineFilante = now + 20000 + Math.random() * 20000;
+  }
+  if (!filante) return;
+  var u = (now - filante.t0) / filante.duree;
+  if (u >= 1) { filante = null; return; }
+  var x = filante.x0 + filante.dx * u, y = filante.y0 + filante.dy * u;
+  var lg = 0.10, qx = x - filante.dx * lg, qy = y - filante.dy * lg;
+  var a = Math.sin(u * Math.PI);
+  var g = ctx.createLinearGradient(qx, qy, x, y);
+  g.addColorStop(0, 'rgba(190,214,255,0)');
+  g.addColorStop(1, 'rgba(226,238,255,' + (0.55 * a).toFixed(3) + ')');
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = g; ctx.lineWidth = 1.4; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(qx, qy); ctx.lineTo(x, y); ctx.stroke();
+  ctx.restore();
+}
+
+/* ----------------------------------------- impulsions d'énergie (filaments) */
+
+var impulsions = [], prochaineImpulsion = 0;
+
+function ajouterImpulsion(a, b, couleur, courbure, now) {
+  if (impulsions.length > 46) return;
+  impulsions.push({
+    a: a, b: b, c: couleur, k: courbure,
+    t0: now, duree: 780 + Math.random() * 620,
+  });
+}
+
+/** Au survol : le nœud « appelle » aussitôt le long de ses propres liens. */
+function impulserAutour(n, now) {
+  if (!n) return;
+  var g = parGroupe[n.groupe], nb = 0, i, l;
+  if (g && n !== g.hub) ajouterImpulsion(g.hub, n, g.couleur, 0.13, now);
+  if (g && n === g.hub) {
+    ajouterImpulsion(parId['#centre'], n, '#ffb877', 0.14, now);
+    for (i = 0; i < g.fiches.length && nb < 7; i++) {
+      var f = parId[g.fiches[i].id];
+      if (f && f.vis) { ajouterImpulsion(n, f, g.couleur, 0, now); nb++; }
+    }
+  }
+  for (i = 0; i < liens.length && nb < 12; i++) {
+    l = liens[i];
+    if (l.a !== n && l.b !== n) continue;
+    ajouterImpulsion(l.a, l.b, '#dbe6ff', 0.09, now); nb++;
+  }
+}
+
+function semerImpulsions(now, eveille) {
+  if (!eveille || now < prochaineImpulsion || !groupes.length) return;
+  prochaineImpulsion = now + 620 + Math.random() * 1500;
+  var c = parId['#centre'];
+  var g = groupes[(Math.random() * groupes.length) | 0];
+  if (!g) return;
+  if (Math.random() < 0.42) ajouterImpulsion(c, g.hub, '#ffb877', 0.14, now);
+  else if (g.fiches.length && !etat.replies[g.cle]) {
+    var f = parId[g.fiches[(Math.random() * g.fiches.length) | 0].id];
+    if (f) ajouterImpulsion(g.hub, f, g.couleur, 0, now);
+  }
+}
+
+function dessinerImpulsions(now) {
+  if (!impulsions.length) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (var i = impulsions.length - 1; i >= 0; i--) {
+    var p = impulsions[i];
+    var u = (now - p.t0) / p.duree;
+    if (u >= 1) { impulsions.splice(i, 1); continue; }
+    if (p.a.cache || p.b.cache) { impulsions.splice(i, 1); continue; }
+    var ax = p.a.sx, ay = p.a.sy, bx = p.b.sx, by = p.b.sy;
+    var mx = (ax + bx) / 2 - (by - ay) * p.k, my = (ay + by) / 2 + (bx - ax) * p.k;
+    var v = 1 - u;
+    var x = v * v * ax + 2 * v * u * mx + u * u * bx;
+    var y = v * v * ay + 2 * v * u * my + u * u * by;
+    if (x < -40 || x > L + 40 || y < -40 || y > H + 40) continue;
+    var a = Math.sin(u * Math.PI);
+    var R = 5 + 9 * a;
+    ctx.globalAlpha = 0.55 * a;
+    ctx.drawImage(halo(p.c), x - R, y - R, R * 2, R * 2);
+    ctx.globalAlpha = 0.85 * a;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(x, y, 1.05 + a * 0.8, 0, TAU); ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* ---- sprites pré-rendus : halo net ---------------------------------------- */
+
+var spritesHalo = {};
+
+function halo(couleur) {
+  if (spritesHalo[couleur]) return spritesHalo[couleur];
+  var s = 128, c = document.createElement('canvas');
+  c.width = c.height = s;
+  var g = c.getContext('2d');
+  var grad = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+  grad.addColorStop(0, hexRgba(couleur, 0.95));
+  grad.addColorStop(0.12, hexRgba(couleur, 0.5));
+  grad.addColorStop(0.32, hexRgba(couleur, 0.15));
+  grad.addColorStop(0.62, hexRgba(couleur, 0.035));
+  grad.addColorStop(1, hexRgba(couleur, 0));
+  g.fillStyle = grad; g.fillRect(0, 0, s, s);
+  spritesHalo[couleur] = c;
+  return c;
+}
+
+
+/**
+ * « Bille » pré-rendue : petite sphère éclairée en haut à gauche. C'est ce qui
+ * donne aux points leur relief dans les captures. Un sprite par couleur, blitté
+ * à la taille voulue — aucun dégradé n'est recréé pendant l'animation.
+ */
+var spritesBille = {};
+function bille(couleur) {
+  if (spritesBille[couleur]) return spritesBille[couleur];
+  var s = 96, c = document.createElement('canvas');
+  c.width = c.height = s;
+  var g = c.getContext('2d');
+  g.beginPath(); g.arc(s / 2, s / 2, s / 2 - 1, 0, TAU); g.clip();
+  var grad = g.createRadialGradient(s * 0.36, s * 0.32, s * 0.03, s * 0.5, s * 0.5, s * 0.56);
+  grad.addColorStop(0, eclaircir(couleur, 120));
+  grad.addColorStop(0.34, eclaircir(couleur, 55));
+  grad.addColorStop(0.78, couleur);
+  grad.addColorStop(1, hexRgba(couleur, 0.72));
+  g.fillStyle = grad; g.fillRect(0, 0, s, s);
+  spritesBille[couleur] = c;
+  return c;
+}
+
+/** Texte en petites capitales espacées, dessiné caractère par caractère. */
+function texteEspace(txt, x, y, esp, aligne) {
+  var s = String(txt), i, larg = 0;
+  for (i = 0; i < s.length; i++) larg += ctx.measureText(s[i]).width + esp;
+  larg -= esp;
+  var cx = aligne === 'center' ? x - larg / 2 : x;
+  for (i = 0; i < s.length; i++) { ctx.fillText(s[i], cx, y); cx += ctx.measureText(s[i]).width + esp; }
+  return larg;
+}
+
+function cheminHexagone(x, y, r) {
+  ctx.beginPath();
+  for (var i = 0; i < 6; i++) {
+    var a = -Math.PI / 2 + i * Math.PI / 3;
+    var px = x + Math.cos(a) * r, py = y + Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+}
+
+function arrondi(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function etoile4(x, y, R, r) {
+  ctx.beginPath();
+  ctx.moveTo(x, y - R);
+  ctx.quadraticCurveTo(x + r * 0.35, y - r * 0.35, x + R, y);
+  ctx.quadraticCurveTo(x + r * 0.35, y + r * 0.35, x, y + R);
+  ctx.quadraticCurveTo(x - r * 0.35, y + r * 0.35, x - R, y);
+  ctx.quadraticCurveTo(x - r * 0.35, y - r * 0.35, x, y - R);
+  ctx.closePath();
+}
+
+/* ------------------------------------------------------------ pictogrammes */
+
+function glypheNoyau(x, y, s) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.strokeStyle = '#0a0d14'; ctx.lineWidth = Math.max(1, s * 0.13);
+  ctx.fillStyle = '#0a0d14';
+  ctx.beginPath(); ctx.moveTo(0, -s * 0.66); ctx.lineTo(0, -s * 0.92); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, -s * 1.0, s * 0.1, 0, TAU); ctx.fill();
+  var w = s * 0.86, h = s * 0.6;
+  ctx.fillRect(-w / 2, -s * 0.66, w, h);
+  ctx.fillStyle = '#ffb877';
+  ctx.fillRect(-w * 0.28, -s * 0.5, w * 0.18, h * 0.3);
+  ctx.fillRect(w * 0.1, -s * 0.5, w * 0.18, h * 0.3);
+  ctx.fillStyle = '#0a0d14';
+  ctx.fillRect(-s * 0.66, s * 0.04, s * 1.32, s * 0.52);
+  ctx.strokeStyle = '#ffb877'; ctx.lineWidth = Math.max(1, s * 0.09);
+  ctx.beginPath(); ctx.moveTo(0, s * 0.04); ctx.lineTo(0, s * 0.56); ctx.stroke();
+  ctx.restore();
+}
+
+function glypheHub(x, y, s, source) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = '#0a0d14'; ctx.strokeStyle = '#0a0d14';
+  ctx.lineWidth = Math.max(0.9, s * 0.17);
+  if (source === 'kb') {
+    for (var i = -1; i <= 1; i++) {
+      ctx.beginPath();
+      if (ctx.ellipse) ctx.ellipse(0, i * s * 0.34, s * 0.62, s * 0.2, 0, 0, TAU);
+      else ctx.arc(0, i * s * 0.34, s * 0.3, 0, TAU);
+      ctx.stroke();
+    }
+  } else if (source === 'vente') {
+    ctx.beginPath();
+    ctx.moveTo(-s * 0.62, 0); ctx.lineTo(0, -s * 0.62); ctx.lineTo(s * 0.62, 0);
+    ctx.lineTo(0, s * 0.62); ctx.closePath(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, -s * 0.16, s * 0.15, 0, TAU); ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.rect(-s * 0.64, -s * 0.36, s * 1.28, s * 0.72); ctx.stroke();
+    ctx.beginPath(); ctx.arc(-s * 0.26, 0, s * 0.12, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(s * 0.26, 0, s * 0.12, 0, TAU); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function glypheHorloge(x, y, s, couleur) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.strokeStyle = couleur; ctx.lineWidth = Math.max(0.8, s * 0.17);
+  ctx.beginPath(); ctx.moveTo(0, -s * 0.5); ctx.lineTo(0, 0); ctx.lineTo(s * 0.36, 0); ctx.stroke();
+  ctx.restore();
+}
+
+function glypheConnecteur(nom, x, y, s) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = '#f2f6ff'; ctx.strokeStyle = '#f2f6ff';
+  ctx.lineWidth = Math.max(1, s * 0.14);
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  if (nom === 'enveloppe') {
+    ctx.beginPath(); ctx.rect(-s * 0.68, -s * 0.46, s * 1.36, s * 0.92); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-s * 0.68, -s * 0.46); ctx.lineTo(0, s * 0.06); ctx.lineTo(s * 0.68, -s * 0.46);
+    ctx.stroke();
+  } else if (nom === 'eclair') {
+    ctx.beginPath();
+    ctx.moveTo(s * 0.22, -s * 0.76); ctx.lineTo(-s * 0.44, s * 0.06);
+    ctx.lineTo(s * 0.0, s * 0.06); ctx.lineTo(-s * 0.2, s * 0.78);
+    ctx.lineTo(s * 0.48, -s * 0.1); ctx.lineTo(s * 0.02, -s * 0.1);
+    ctx.closePath(); ctx.fill();
+  } else if (nom === 'oeil') {
+    ctx.beginPath();
+    ctx.moveTo(-s * 0.76, 0);
+    ctx.quadraticCurveTo(0, -s * 0.74, s * 0.76, 0);
+    ctx.quadraticCurveTo(0, s * 0.74, -s * 0.76, 0);
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, s * 0.23, 0, TAU); ctx.fill();
+  } else if (nom === 'triangle') {
+    ctx.beginPath();
+    ctx.moveTo(0, -s * 0.68); ctx.lineTo(s * 0.72, s * 0.58); ctx.lineTo(-s * 0.72, s * 0.58);
+    ctx.closePath(); ctx.fill();
+  } else if (nom === 'calendrier') {
+    ctx.beginPath(); ctx.rect(-s * 0.7, -s * 0.6, s * 1.4, s * 1.2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-s * 0.7, -s * 0.24); ctx.lineTo(s * 0.7, -s * 0.24); ctx.stroke();
+    ctx.font = '700 ' + (s * 0.6).toFixed(1) + 'px -apple-system,Helvetica,Arial';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('31', 0, s * 0.22);
+  } else if (nom === 'etoile') {
+    etoile4(0, 0, s * 0.8, s * 0.24); ctx.fill();
+  } else {
+    ctx.font = '700 ' + (s * 1.15).toFixed(1) + 'px -apple-system,Helvetica,Arial';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(nom, 0, s * 0.04);
+  }
+  ctx.restore();
+}
+
+/* ------------------------------------------------------------------- boucle */
+
+var t0 = performance.now(), raf = null, enPause = false, dernierTemps = 0;
+
+function reveiller() {
+  etat.derniereInteraction = performance.now();
+  if (enPause) { enPause = false; dernierTemps = 0; boucler(); }
+}
+
+function boucler() {
+  if (raf) return;
+  raf = requestAnimationFrame(function (now) {
+    raf = null;
+    if (document.hidden) { enPause = true; return; }
+    var camBouge = dessiner(now);
+    var anime = (etat.rotation > 0.001 && !etat.pauseRot) || now < etat.transFin || etat.vol || camBouge
+      || impulsions.length || filante || etat.drillAnim
+      || now < etat.chaudJusqua || (now - etat.derniereInteraction) < 4000;
+    if (anime) boucler(); else enPause = true;
+  });
+}
+
+/* ------------------------------------------------------------------ frame */
+
+function dessiner(now) {
+  var dt = dernierTemps ? Math.min((now - dernierTemps) / 1000, 0.1) : 0.016;
+  dernierTemps = now;
+  var temps = (now - t0) / 1000;
+
+  var camBouge = majCamera(dt);
+
+  /* ---------------------------------------------------- rotation du plan 2D */
+  /* Rotation AUTOMATIQUE lente du disque, sauf pendant qu'on le tourne à la
+     main (clic droit / Maj+glisser) : l'auto se met alors en pause. */
+  if (!(tire && orbite) && !etat.pauseRot) {
+    etat.angle += dt * etat.rotation * 0.115;
+    etat.phase += dt * etat.rotation * 0.16;        // rotation différentielle des anneaux
+  }
+
+  /* avancement de l'animation de plongée (drill-down) */
+  if (etat.drillAnim) {
+    var dm = Math.min((now - etat.drillT0) / 640, 1);
+    etat.drillMix = ease(dm);
+    if (dm >= 1) { etat.drillAnim = false; etat.drillMix = 1; }
+  }
+  if (etat.angle > TAU) etat.angle -= TAU;
+  else if (etat.angle < -TAU) etat.angle += TAU;
+  majOrientation();
+
+  var enTransition = now < etat.transFin && etat.layout !== etat.layoutPrec;
+  if (!enTransition && etat.layoutPrec !== etat.layout) etat.layoutPrec = etat.layout;
+  if (etat.layout === 'force' && now < etat.chaudJusqua) pas(0.09);
+
+  var melangeG = etat.layout === etat.layoutPrec ? 1
+    : ressort((now - etat.transT0 - ETALEMENT * 0.5) / DUREE_TRANS);
+  var partForce = (etat.layout === 'force' ? melangeG : 0)
+    + (etat.layoutPrec === 'force' ? 1 - melangeG : 0);
+  var tx = 0;
+
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.fillStyle = '#05060a';
+  ctx.fillRect(0, 0, L, H);
+
+  var o = versEcran(0, 0);
+
+  var vg = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, Math.max(L, H) * 0.8);
+  vg.addColorStop(0, 'rgba(78,52,136,.22)');
+  vg.addColorStop(0.44, 'rgba(42,29,78,.11)');
+  vg.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, L, H);
+
+  dessinerGrilleHex(o);
+  dessinerEtoiles(temps);
+
+  /* voile circulaire de la zone mémoire : un disque vu de face */
+  var rz = RA.mem1 * etat.zoom * 1.06;
+  if (rz > 4) {
+    var dg = ctx.createRadialGradient(o.x, o.y, rz * 0.1, o.x, o.y, rz);
+    dg.addColorStop(0, 'rgba(40,27,70,.36)');
+    dg.addColorStop(0.74, 'rgba(48,33,82,.24)');
+    dg.addColorStop(1, 'rgba(20,14,38,0)');
+    ctx.fillStyle = dg;
+    ctx.beginPath(); ctx.arc(o.x, o.y, rz, 0, TAU); ctx.fill();
+  }
+
+  /* ------- 1re passe : position dans le monde (avant respiration) --------- */
+  var i, n, marge;
+  for (i = 0; i < noeuds.length; i++) {
+    n = noeuds[i];
+    positionner(n, etat.phase, now, _w3);
+    n.wx = _w3.x; n.wy = _w3.y; n.wz = _w3.z;
+    n.cache = (n.kind === 'fiche' && etat.replies[n.groupe]);
+  }
+
+  /* superposition du drill-down : réécrit les positions des fiches en portée,
+     sans toucher au layout de base (remonter le restaure tel quel). */
+  appliquerPlongee();
+
+  /* RESPIRATION : chaque galaxie enfle et se contracte de ±2 %, déphasée. */
+  for (i = 0; i < groupes.length; i++) {
+    groupes[i].resp = 1 + 0.02 * Math.sin(temps * 0.33 + groupes[i].respPhase);
+  }
+
+  /* ------- 2e passe : respiration, projection, survol, découpe ------------ */
+  var kSurvol = 1 - Math.pow(0.001, dt / 0.15);      // montée en 150 ms
+  for (i = 0; i < noeuds.length; i++) {
+    n = noeuds[i];
+    var wx = n.wx, wy = n.wy, wz = n.wz;
+    if (n.kind === 'fiche') {
+      var gg = parGroupe[n.groupe];
+      if (gg && gg.resp !== 1) {
+        var h = gg.hub, sc = gg.resp;
+        wx = h.wx + (wx - h.wx) * sc;
+        wy = h.wy + (wy - h.wy) * sc;
+        wz = h.wz + (wz - h.wz) * sc;
+      }
+    }
+    projeter(wx, wy, wz, _pr);
+    n.px = _pr.x; n.py = _pr.y; n.vz = 0; n.k = 1;
+    n.sx = (_pr.x - etat.camx) * etat.zoom + L / 2;
+    n.sy = (_pr.y - etat.camy) * etat.zoom + H / 2;
+    n.brume = 1;                                    // carte plate : tout est net
+    n.flou = 0;
+    if (n._ha === undefined) n._ha = 0;
+    var vise = (n === etat.survol) ? 1 : 0;
+    if (n._ha !== vise) {
+      n._ha += (vise - n._ha) * kSurvol;
+      if (Math.abs(vise - n._ha) < 0.008) n._ha = vise;
+    }
+    marge = 60 + n.r * etat.zoom;
+    n.vis = n.sx > -marge && n.sx < L + marge && n.sy > -marge && n.sy < H + marge;
+  }
+
+  var aAnneaux = 1 - partForce;
+  if (aAnneaux > 0.01) dessinerAnneaux(aAnneaux, o, tx);
+  if (partForce > 0.02) dessinerAmas(partForce, tx);
+
+  var eveille = etat.rotation > 0.001 || (now - etat.derniereInteraction) < 4000;
+  dessinerLiens(o);
+  semerImpulsions(now, eveille);
+  dessinerImpulsions(now);
+
+  /* --------------------------------- nœuds, du fond vers le premier plan */
+  for (i = 0; i < ordre.length; i++) {
+    n = ordre[i];
+    if (!n.vis || n.cache) continue;
+    var op = opaciteDe(n);
+    if (op < 0.02) continue;
+    dessinerNet(n, op, temps, o, aAnneaux);
+  }
+
+  if (aAnneaux > 0.01) dessinerLegendes(aAnneaux, o, tx);
+  if (etat.pile.length || etat.drillAnim) dessinerPlongee();
+  if (etat.noms) dessinerNoms();
+  majFilante(now, eveille);
+
+  return camBouge;
+}
+
+/* ---------------------------------------------------------- fond hexagonal */
+
+function dessinerGrilleHex(o) {
+  var taille = 42 * etat.zoom;
+  if (taille < 8) return;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(154,182,232,.038)';
+  ctx.lineWidth = 1;
+  var pasX = taille * 1.5, pasY = taille * Math.sqrt(3);
+  var c0 = Math.floor((-o.x) / pasX) - 1, c1 = Math.ceil((L - o.x) / pasX) + 1;
+  var r0 = Math.floor((-o.y) / pasY) - 2, r1 = Math.ceil((H - o.y) / pasY) + 2;
+  if ((c1 - c0) * (r1 - r0) > 4500) { ctx.restore(); return; }
+  ctx.beginPath();
+  for (var c = c0; c <= c1; c++) {
+    for (var r = r0; r <= r1; r++) {
+      var x = o.x + c * pasX;
+      var y = o.y + r * pasY + (c % 2 ? pasY / 2 : 0);
+      for (var k = 0; k < 6; k++) {
+        var a = k * Math.PI / 3;
+        var px = x + Math.cos(a) * taille, py = y + Math.sin(a) * taille;
+        if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+    }
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function dessinerEtoiles(temps) {
+  for (var i = 0; i < etoiles.length; i++) {
+    var e = etoiles[i];
+    var p = etat.zoom * e.par;
+    var x = (e.x - etat.camx) * p + L / 2, y = (e.y - etat.camy) * p + H / 2;
+    if (x < 0 || x > L || y < 0 || y > H) continue;
+    var sc = 0.62 + 0.38 * Math.sin(temps * e.vt + e.ph);
+    ctx.fillStyle = 'rgba(200,215,255,' + (e.o * sc).toFixed(3) + ')';
+    ctx.fillRect(x, y, e.t, e.t);
+  }
+}
+
+/* -------------------------------------------------------- anneaux & légendes */
+
+/* Les anneaux sont des cercles du monde centrés sur le noyau, vus DE FACE :
+   un simple `arc()` centré à l'origine écran suffit — la rotation du plan ne
+   déforme pas un cercle. */
+var PAS_ANNEAU = 72;
+
+function anneauGuide(rayon, couleur, alpha, pointille, tx) {
+  var R = rayon * etat.zoom;
+  if (R < 6 || R > 40000) return;
+  var cx = (0 - etat.camx) * etat.zoom + L / 2;
+  var cy = (0 - etat.camy) * etat.zoom + H / 2;
+  ctx.save();
+  ctx.lineWidth = 1;
+  if (pointille) ctx.setLineDash([2, 7]);
+  ctx.strokeStyle = hexRgba(couleur, alpha);
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, TAU);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Ancre d'une légende : juste à l'extérieur de l'anneau, sur un rayon donné.
+    Les cercles étant concentriques, on éVENTAILLE les quatre mots sur des
+    angles distincts pour qu'ils ne se chevauchent pas sur la ligne médiane. */
+function ancreAnneau(rayon, ang) {
+  var cx = (0 - etat.camx) * etat.zoom + L / 2;
+  var cy = (0 - etat.camy) * etat.zoom + H / 2;
+  var R = rayon * etat.zoom + 18;
+  return { x: cx + Math.cos(ang) * R, y: cy + Math.sin(ang) * R };
+}
+
+function legende(x, y, texte, couleur, alpha) {
+  if (y < -20 || y > H + 20 || x < -300 || x > L + 300) return;
+  ctx.save();
+  ctx.font = '600 13px -apple-system,BlinkMacSystemFont,Helvetica,Arial';
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  ctx.fillStyle = hexRgba(couleur, Math.min(alpha, 0.92));
+  ctx.shadowColor = hexRgba(couleur, 0.55); ctx.shadowBlur = 14;
+  texteEspace(texte, x, y, 4.6, 'center');
+  ctx.restore();
+}
+
+function dessinerAnneaux(a, o, tx) {
+  anneauGuide(R_SKILL[0], '#ff9d4d', 0.13 * a, true, tx);
+  anneauGuide(R_SKILL[1], '#ff9d4d', 0.11 * a, true, tx);
+  anneauGuide(R_SKILL[2], '#ff9d4d', 0.30 * a, false, tx);
+  anneauGuide(RA.mem1, '#a78bfa', 0.12 * a, true, tx);
+  anneauGuide(RA.routines, '#e8c268', 0.42 * a, false, tx);
+  anneauGuide(RA.apps, '#7ea8d8', 0.34 * a, false, tx);
+}
+
+/** Légendes des anneaux — tracées APRÈS les nœuds pour rester lisibles. */
+var DEF_LEGENDES = null;
+
+function dessinerLegendes(a, o, tx) {
+  if (!DEF_LEGENDES) DEF_LEGENDES = [
+    /* ang : rayon (radians) où poser le mot, éventaillé sur le flanc gauche,
+       du haut (skills, anneau serré) vers le bas (applications, large). */
+    { r: 'sk', t: 'SKILLS', c: '#ff9d4d', o: 0.90, ang: Math.PI * 0.86 },
+    { r: 'me', t: 'MÉMOIRE', c: '#a78bfa', o: 0.85, ang: Math.PI * 1.00 },
+    { r: 'ro', t: 'ROUTINES', c: '#e8c268', o: 0.88, ang: Math.PI * 1.12 },
+    { r: 'ap', t: 'APPLICATIONS', c: '#7ea8d8', o: 0.88, ang: Math.PI * 1.24 },
+  ];
+  var rayons = { sk: R_SKILL[2], me: RA.mem1, ro: RA.routines, ap: RA.apps };
+  var pos = [], i;
+  for (i = 0; i < DEF_LEGENDES.length; i++) {
+    var an = ancreAnneau(rayons[DEF_LEGENDES[i].r], DEF_LEGENDES[i].ang);
+    an.x = borner(an.x, 90, Math.max(150, L - PANNEAU() - 70));
+    an.y = borner(an.y, 30, H - 30);
+    pos.push(an);
+  }
+  /* garde-fou : deux mots trop proches se décalent verticalement */
+  for (i = 1; i < pos.length; i++) {
+    for (var j = 0; j < i; j++) {
+      if (Math.abs(pos[i].x - pos[j].x) < 90 && Math.abs(pos[i].y - pos[j].y) < 17) {
+        pos[i].y = pos[j].y + 17;
+      }
+    }
+  }
+  for (i = 0; i < DEF_LEGENDES.length; i++) {
+    legende(pos[i].x, pos[i].y, DEF_LEGENDES[i].t, DEF_LEGENDES[i].c,
+      DEF_LEGENDES[i].o * a);
+  }
+}
+
+/* ---------------------------- amas non mémoire : leur repère en mode Force */
+
+var AMAS = null;
+function dessinerAmas(a, tx) {
+  if (!AMAS) AMAS = [
+    { ancre: ANCRE_SKILL, oy: 0, txt: 'SKILLS', couleur: '#ff9d4d', glyphe: 'etoile' },
+    { ancre: ANCRE_ROUTINE, oy: 0, txt: 'ROUTINES', couleur: '#e8c268', glyphe: 'horloge' },
+    { ancre: ANCRE_APP, oy: 118, txt: 'APPLICATIONS', couleur: '#7ea8d8', glyphe: 'hexagone' },
+  ];
+  ctx.save();
+  for (var i = 0; i < AMAS.length; i++) {
+    var m = AMAS[i];
+    var s = ecranPlan(m.ancre.x, m.ancre.y + m.oy, 0, tx, _e3);
+    if (s.x < -120 || s.x > L + 120 || s.y < -60 || s.y > H + 60) continue;
+    var R = Math.max(5, 8 * etat.zoom * s.k);
+    ctx.globalAlpha = a;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.drawImage(halo(m.couleur), s.x - R * 5, s.y - R * 5, R * 10, R * 10);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = m.couleur;
+    ctx.beginPath(); ctx.arc(s.x, s.y, R, 0, TAU); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(s.x, s.y, R, 0, TAU); ctx.stroke();
+    if (R > 6) {
+      if (m.glyphe === 'horloge') glypheHorloge(s.x, s.y, R * 0.9, 'rgba(10,13,20,.85)');
+      else if (m.glyphe === 'hexagone') {
+        cheminHexagone(s.x, s.y, R * 0.5);
+        ctx.strokeStyle = 'rgba(10,13,20,.85)'; ctx.lineWidth = Math.max(1, R * 0.14); ctx.stroke();
+      } else {
+        ctx.fillStyle = 'rgba(10,13,20,.85)';
+        etoile4(s.x, s.y, R * 0.62, R * 0.2); ctx.fill();
+      }
+    }
+    ctx.font = '700 9.5px -apple-system,Helvetica,Arial';
+    ctx.fillStyle = 'rgba(240,246,255,.94)';
+    ctx.shadowColor = 'rgba(0,0,0,.95)'; ctx.shadowBlur = 7;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    texteEspace(m.txt, s.x, s.y + R + 13, 1.7, 'center');
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+
+/* ------------------------------------------------------------------- liens */
+
+function estEnAvant(n) {
+  var s = etat.survol || etat.selection;
+  if (!s) return false;
+  if (s.kind === 'hub') return n.groupe === s.groupe || n === s;
+  if (n === s) return true;
+  if (n.kind === 'hub' && s.groupe === n.groupe) return true;
+  var v = voisins[s.id];
+  return !!(v && v.indexOf(n.id) >= 0);
+}
+
+function opaciteDe(n) {
+  var o = 1;
+  if (etat.trouves) o = etat.trouves[n.id] ? 1 : 0.15;
+  if (etat.survol || etat.selection) o = estEnAvant(n) ? 1 : Math.min(o, 0.18);
+  if (etat.pile.length || etat.drillAnim) {
+    var f = etat.drillAnim ? etat.drillMix : 1;
+    if (!estDansPlongee(n)) o = Math.min(o, 1 - 0.86 * f);   // le reste de l'univers s'estompe
+  }
+  return Math.max(Math.min(o, 1), 0);
+}
+
+/** Courbe douce entre deux points écran, décalée perpendiculairement. */
+function courbe(ax, ay, bx, by, k) {
+  var mx = (ax + bx) / 2, my = (ay + by) / 2;
+  var dx = bx - ax, dy = by - ay;
+  ctx.moveTo(ax, ay);
+  ctx.quadraticCurveTo(mx - dy * k, my + dx * k, bx, by);
+}
+
+function dessinerLiens(o) {
+  var i, l, g, gr, hub, f;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+
+  /* wikiliens au repos : filaments doux */
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(186,202,240,.10)';
+  ctx.beginPath();
+  for (i = 0; i < liens.length; i++) {
+    l = liens[i];
+    if (l.a.cache || l.b.cache) continue;
+    if ((!l.a.vis && !l.b.vis)) continue;
+    if ((etat.survol || etat.selection) && !(estEnAvant(l.a) && estEnAvant(l.b))) continue;
+    courbe(l.a.sx, l.a.sy, l.b.sx, l.b.sy, 0.09);
+  }
+  ctx.stroke();
+
+  /* rayons hub → fiches */
+  for (g = 0; g < groupes.length; g++) {
+    gr = groupes[g];
+    if (etat.replies[gr.cle]) continue;
+    hub = gr.hub;
+    var fort = (etat.survol && (etat.survol === hub || etat.survol.groupe === gr.cle)) ||
+               (etat.selection && (etat.selection === hub || etat.selection.groupe === gr.cle));
+    ctx.beginPath();
+    ctx.strokeStyle = fort ? hexRgba(gr.couleur, 0.34) : hexRgba(gr.couleur, 0.05);
+    ctx.lineWidth = fort ? 1 : 0.8;
+    for (i = 0; i < gr.fiches.length; i++) {
+      f = parId[gr.fiches[i].id];
+      if (!f.vis && !hub.vis) continue;
+      ctx.moveTo(hub.sx, hub.sy); ctx.lineTo(f.sx, f.sy);
+    }
+    ctx.stroke();
+  }
+
+  /* noyau → hubs */
+  var c = parId['#centre'];
+  ctx.strokeStyle = 'rgba(255,180,120,.20)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (g = 0; g < groupes.length; g++) {
+    hub = groupes[g].hub;
+    courbe(c.sx, c.sy, hub.sx, hub.sy, 0.14);
+  }
+  ctx.stroke();
+
+  /* --- mise en avant : le nœud actif et son hub, filament coloré bien visible */
+  var act = etat.survol || etat.selection;
+  if (act && (act.kind === 'fiche' || act.kind === 'hub')) {
+    var gh = parGroupe[act.groupe];
+    if (gh && act !== gh.hub) {
+      ctx.strokeStyle = hexRgba(gh.couleur, 0.85);
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      courbe(act.sx, act.sy, gh.hub.sx, gh.hub.sy, 0.13);
+      ctx.stroke();
+    }
+    if (act.kind === 'fiche') {
+      ctx.strokeStyle = 'rgba(255,255,255,.72)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      for (i = 0; i < liens.length; i++) {
+        l = liens[i];
+        if (l.a !== act && l.b !== act) continue;
+        courbe(l.a.sx, l.a.sy, l.b.sx, l.b.sy, 0.09);
+      }
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+/* ----------------------------------------------------------- nœuds : rayon */
+
+function rayonEcran(n) {
+  var z = etat.zoom * (n.k === undefined ? 1 : n.k);
+  var sv = 1 + 0.19 * (n._ha || 0);                 // montée au survol
+  if (n.kind === 'app') return n.r * Math.max(z, 0.3) * (0.72 + 0.28 * etat.taille) * sv;
+  if (n.kind === 'hub') return Math.max(5, n.r * Math.max(z, 0.4) * (0.75 + 0.25 * etat.taille)) * sv;
+  if (n.kind === 'centre') return Math.max(9, n.r * Math.max(z, 0.4));
+  if (n.kind === 'skill') return n.r * etat.taille * Math.max(z, 0.5) * sv;
+  if (n.kind === 'routine') return n.r * etat.taille * Math.max(z, 0.5) * sv;
+  var g = (n.gradTaille && etat.layout === 'rings') ? n.gradTaille : 1;
+  return Math.max(0.6, n.r * etat.taille * Math.max(z, 0.42) * g) * sv;
+}
+
+/* ----------------------------------------------------------- nœuds : nets */
+
+function dessinerNet(n, op, temps, o, aAnneaux) {
+  if (n.kind === 'fiche') return dessinerFiche(n, op, temps);
+  if (n.kind === 'skill') return dessinerSkill(n, op, temps);
+  if (n.kind === 'routine') return dessinerRoutine(n, op, temps);
+  if (n.kind === 'app') return dessinerApp(n, op, o, aAnneaux);
+  if (n.kind === 'hub') return dessinerHub(n, op, temps);
+  if (n.kind === 'centre') return dessinerNoyau(n, temps);
+}
+
+function dessinerFiche(n, op, temps) {
+  var R = rayonEcran(n);
+  var trouve = etat.trouves && etat.trouves[n.id];
+  var couleur = trouve ? '#4ade80' : n.couleur;
+  ctx.save();
+  ctx.globalAlpha = op * (n.brut ? 0.62 : 1);
+  ctx.globalCompositeOperation = 'lighter';
+  var Rh = R * (n.brut ? 3.2 : 4.6);
+  ctx.drawImage(halo(couleur), n.sx - Rh, n.sy - Rh, Rh * 2, Rh * 2);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = op;
+  if (n.brut) {
+    /* zone brute : plus petite, plus terne, cerclée */
+    ctx.strokeStyle = hexRgba(couleur, 0.6); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(n.sx, n.sy, R + 2.1, 0, TAU); ctx.stroke();
+    ctx.globalAlpha = op * 0.7;
+    ctx.drawImage(bille(couleur), n.sx - R, n.sy - R, R * 2, R * 2);
+    ctx.globalAlpha = op;
+  } else {
+    ctx.drawImage(bille(trouve ? '#4ade80' : couleur), n.sx - R, n.sy - R, R * 2, R * 2);
+  }
+
+  /* Brouillon (statut: draft) : cerne pointillé ambre — « pas encore validé ». */
+  if (n.draft) {
+    ctx.save();
+    ctx.setLineDash([2, 3]);
+    ctx.strokeStyle = hexRgba('#e8c268', 0.9); ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(n.sx, n.sy, R + 3, 0, TAU); ctx.stroke();
+    ctx.restore();
+  }
+
+  if (etat.selection === n) {
+    /* halo pulsant doux — le sujet respire, il n'est pas cerclé de blanc dur */
+    var pu = 0.5 + 0.5 * Math.sin(temps * 2.1);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.30 + 0.26 * pu;
+    var Rp = R * (5.4 + 1.5 * pu);
+    ctx.drawImage(halo(couleur), n.sx - Rp, n.sy - Rp, Rp * 2, Rp * 2);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = op;
+    ctx.strokeStyle = 'rgba(255,255,255,' + (0.55 + 0.37 * pu).toFixed(2) + ')';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(n.sx, n.sy, R + 4 + 2.4 * pu, 0, TAU); ctx.stroke();
+  } else if (etat.survol === n) {
+    ctx.strokeStyle = 'rgba(255,255,255,.92)'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(n.sx, n.sy, R + 5, 0, TAU); ctx.stroke();
+  } else if ((etat.survol || etat.selection) && estEnAvant(n)) {
+    var sc = 0.5 + 0.5 * Math.sin(temps * 4 + (n.rang || 0));
+    ctx.strokeStyle = 'rgba(255,255,255,' + (0.22 + 0.42 * sc).toFixed(2) + ')';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(n.sx, n.sy, R + 3.2, 0, TAU); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function dessinerSkill(n, op, temps) {
+  var scint = 0.78 + 0.3 * Math.sin(temps * 1.9 + (n.graine % 100) * 0.37);
+  var R = rayonEcran(n) * scint;
+  ctx.save();
+  ctx.globalAlpha = op;
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.drawImage(halo('#ff9d4d'), n.sx - R * 3.4, n.sy - R * 3.4, R * 6.8, R * 6.8);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = (etat.trouves && etat.trouves[n.id]) ? '#bbf7d0' : '#ffb877';
+  etoile4(n.sx, n.sy, R * 1.95, R * 0.62);
+  ctx.fill();
+  if (etat.survol === n || etat.selection === n) {
+    ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(n.sx, n.sy, R * 3, 0, TAU); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function dessinerRoutine(n, op, temps) {
+  var R = rayonEcran(n), Rorb = R * 2.55;
+  ctx.save();
+  ctx.globalAlpha = op;
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.drawImage(halo('#e8c268'), n.sx - R * 4.2, n.sy - R * 4.2, R * 8.4, R * 8.4);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.strokeStyle = hexRgba('#e8c268', 0.62); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(n.sx, n.sy, Rorb, 0, TAU); ctx.stroke();
+  ctx.fillStyle = '#e8c268';
+  ctx.beginPath(); ctx.arc(n.sx, n.sy, R, 0, TAU); ctx.fill();
+  var ang = temps * 0.55 + (n.graine % 360) * 0.017;
+  ctx.fillStyle = '#fff0c8';
+  ctx.beginPath();
+  ctx.arc(n.sx + Math.cos(ang) * Rorb, n.sy + Math.sin(ang) * Rorb, Math.max(1.2, R * 0.24), 0, TAU);
+  ctx.fill();
+  if (R > 5.5) glypheHorloge(n.sx, n.sy, R, 'rgba(10,13,20,.8)');
+  if (etat.survol === n || etat.selection === n) {
+    ctx.strokeStyle = 'rgba(255,255,255,.88)'; ctx.lineWidth = 1.3;
+    ctx.beginPath(); ctx.arc(n.sx, n.sy, Rorb + 5, 0, TAU); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function dessinerApp(n, op, o, aAnneaux) {
+  var R = rayonEcran(n);
+  ctx.save();
+  ctx.globalAlpha = op;
+  if (aAnneaux > 0.05) {
+    var dx = o.x - n.sx, dy = o.y - n.sy;
+    var d = Math.sqrt(dx * dx + dy * dy) || 1;
+    ctx.strokeStyle = 'rgba(126,168,216,' + (0.16 * aAnneaux).toFixed(3) + ')';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(n.sx + dx / d * R, n.sy + dy / d * R);
+    ctx.lineTo(n.sx + dx * 0.26, n.sy + dy * 0.26);
+    ctx.stroke();
+  }
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.drawImage(halo('#3d6ea8'), n.sx - R * 2.4, n.sy - R * 2.4, R * 4.8, R * 4.8);
+  ctx.globalCompositeOperation = 'source-over';
+
+  var g = ctx.createLinearGradient(n.sx, n.sy - R, n.sx, n.sy + R);
+  g.addColorStop(0, 'rgba(104,148,206,.36)');
+  g.addColorStop(0.5, 'rgba(32,50,84,.32)');
+  g.addColorStop(1, 'rgba(18,28,48,.44)');
+  cheminHexagone(n.sx, n.sy, R);
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = (etat.survol === n || etat.selection === n)
+    ? 'rgba(215,234,255,.95)' : 'rgba(140,182,230,.62)';
+  ctx.lineWidth = 1.1; ctx.stroke();
+  cheminHexagone(n.sx, n.sy, R * 0.78);
+  ctx.strokeStyle = 'rgba(160,196,240,.12)'; ctx.lineWidth = 0.8; ctx.stroke();
+  if (R > 9) glypheConnecteur(n.glyphe, n.sx, n.sy, R * 0.46);
+  ctx.restore();
+}
+
+function dessinerHub(n, op, temps) {
+  var gr = parGroupe[n.groupe];
+  var R = rayonEcran(n), Rorb = R * 2.2;
+  ctx.save();
+  ctx.globalAlpha = op;
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.drawImage(halo(gr.couleur), n.sx - R * 4.6, n.sy - R * 4.6, R * 9.2, R * 9.2);
+  ctx.globalCompositeOperation = 'source-over';
+
+  ctx.strokeStyle = hexRgba(gr.couleur, 0.36); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(n.sx, n.sy, Rorb, 0, TAU); ctx.stroke();
+  var ang = -temps * 0.4 + (n.graine % 100) * 0.06;
+  ctx.fillStyle = hexRgba(gr.couleur, 0.9);
+  ctx.beginPath();
+  ctx.arc(n.sx + Math.cos(ang) * Rorb, n.sy + Math.sin(ang) * Rorb, Math.max(1.1, R * 0.18), 0, TAU);
+  ctx.fill();
+
+  ctx.fillStyle = gr.couleur;
+  ctx.beginPath(); ctx.arc(n.sx, n.sy, R, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.38)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(n.sx, n.sy, R, 0, TAU); ctx.stroke();
+  if (R > 7) glypheHub(n.sx, n.sy, R * 0.62, gr.source);
+
+  /* bulle du compteur */
+  var txt = String(gr.fiches.length);
+  ctx.font = '600 9.5px -apple-system,Helvetica,Arial';
+  var w = ctx.measureText(txt).width + 10;
+  var bx = n.sx + Rorb * 0.76, by = n.sy - Rorb * 0.8;
+  ctx.fillStyle = 'rgba(12,16,26,.92)';
+  ctx.strokeStyle = hexRgba(gr.couleur, 0.55); ctx.lineWidth = 1;
+  arrondi(bx - w / 2, by - 7, w, 14, 7);
+  ctx.fill(); ctx.stroke();
+  ctx.fillStyle = eclaircir(gr.couleur);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(txt, bx, by + 0.5);
+
+  /* étiquette */
+  ctx.font = '700 9.5px -apple-system,Helvetica,Arial';
+  ctx.fillStyle = 'rgba(240,246,255,.94)';
+  ctx.shadowColor = 'rgba(0,0,0,.95)'; ctx.shadowBlur = 7;
+  ctx.textAlign = 'left';
+  /* alternance dessus/dessous : évite l'empilement des étiquettes voisines */
+  var dy = gr.impair ? -(Rorb + 15) : (Rorb + 13);
+  texteEspace(courtLabel(gr.label, 18), n.sx, n.sy + dy, 1.7, 'center');
+  ctx.shadowBlur = 0;
+
+  if (etat.replies[gr.cle]) {
+    ctx.strokeStyle = hexRgba(gr.couleur, 0.5); ctx.lineWidth = 1;
+    ctx.setLineDash([2, 4]);
+    ctx.beginPath(); ctx.arc(n.sx, n.sy, Rorb * 1.5, 0, TAU); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  if (etat.selection === n) {
+    var pu = 0.5 + 0.5 * Math.sin(temps * 2.1);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.26 + 0.24 * pu;
+    var Rp = R * (4.4 + 1.4 * pu);
+    ctx.drawImage(halo(gr.couleur), n.sx - Rp, n.sy - Rp, Rp * 2, Rp * 2);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = op;
+    ctx.strokeStyle = '#ff9d4d'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(n.sx, n.sy, R + 4 + 2.2 * pu, 0, TAU); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function dessinerNoyau(n, temps) {
+  var R = rayonEcran(n);
+  var puls = 1 + 0.06 * Math.sin(temps * 1.4);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.drawImage(halo('#ff9d4d'), n.sx - R * 7 * puls, n.sy - R * 7 * puls, R * 14 * puls, R * 14 * puls);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = '#ff9d4d';
+  ctx.beginPath(); ctx.arc(n.sx, n.sy, R, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,220,180,.8)'; ctx.lineWidth = 1.3;
+  ctx.beginPath(); ctx.arc(n.sx, n.sy, R, 0, TAU); ctx.stroke();
+  if (R > 9) glypheNoyau(n.sx, n.sy, R * 0.8);
+  ctx.font = '700 10.5px -apple-system,Helvetica,Arial';
+  ctx.fillStyle = 'rgba(255,255,255,.96)';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(0,0,0,.95)'; ctx.shadowBlur = 8;
+  texteEspace('CLAUDE.MD', n.sx, n.sy + R + 16, 2.8, 'center');
+  ctx.restore();
+}
+
+function dessinerNoms() {
+  if (etat.zoom < 0.25) return;
+  ctx.save();
+  ctx.font = '9px -apple-system,Helvetica,Arial';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  var montre = 0;
+  for (var i = 0; i < noeuds.length; i++) {
+    var n = noeuds[i];
+    if (n.kind !== 'fiche' || !n.vis || n.cache || n.flou > 0.5) continue;
+    var op = opaciteDe(n);
+    if (op < 0.5) continue;
+    if (montre++ > 900) break;
+    ctx.fillStyle = 'rgba(178,192,216,' + (0.44 * op).toFixed(2) + ')';
+    ctx.fillText(courtLabel(n.fichier, 26), n.sx, n.sy + rayonEcran(n) + 2);
+  }
+  ctx.restore();
+}
+
+/* ============================================================ interactions */
+
+function noeudSous(sx, sy) {
+  var meilleur = null, dmin = 1e9, zmin = 1e9;
+  for (var i = 0; i < noeuds.length; i++) {
+    var n = noeuds[i];
+    if (!n.vis || n.cache) continue;
+    if (n.flou > 1.2) continue;                      // trop flou : non cliquable
+    var R = rayonEcran(n);
+    if (n.kind === 'skill') R *= 2.2;
+    else if (n.kind === 'routine') R *= 2.6;
+    else R += 4;
+    R = Math.max(R, 5);
+    var dx = sx - n.sx, dy = sy - n.sy;
+    var d = dx * dx + dy * dy;
+    if (d >= R * R) continue;
+    /* à recouvrement, c'est le nœud LE PLUS PROCHE de la caméra qui gagne */
+    if (n.vz < zmin - 1 || (Math.abs(n.vz - zmin) <= 1 && d < dmin)) {
+      zmin = Math.min(zmin, n.vz); dmin = d; meilleur = n;
+    }
+  }
+  return meilleur;
+}
+
+var tire = false, orbite = false, dernierX = 0, dernierY = 0, aBouge = false;
+var boutonPresse = -1, downX = 0, downY = 0;
+
+cv.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+cv.addEventListener('mousedown', function (e) {
+  tire = true; aBouge = false;
+  boutonPresse = e.button;
+  downX = e.clientX; downY = e.clientY;
+  /* Maj ou clic droit : on ORBITE. Glisser normal : on panoramique. */
+  orbite = !!e.shiftKey || e.button === 2;
+  dernierX = e.clientX; dernierY = e.clientY;
+  etat.vol = null;
+  cv.classList.add('tire');
+});
+
+window.addEventListener('mouseup', function (e) {
+  var btn = boutonPresse; boutonPresse = -1;
+  tire = false; orbite = false; cv.classList.remove('tire');
+  /* clic DROIT sans glisser (< ~4 px) : bascule la pause de l'auto-rotation.
+     Avec glissement, c'était une rotation manuelle du plan → rien de plus. */
+  if (btn === 2) {
+    var dist = Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY);
+    if (dist < 4) basculerPause();
+  }
+});
+
+cv.addEventListener('mousemove', function (e) {
+  if (tire) {
+    var dx = e.clientX - dernierX, dy = e.clientY - dernierY;
+    if (Math.abs(dx) + Math.abs(dy) > 2) aBouge = true;
+    if (orbite) {
+      /* rotation du plan 2D : le glisser horizontal fait pivoter tout le disque
+         autour de son centre (l'auto-rotation est en pause tant qu'on tient). */
+      etat.angle += dx * 0.006;
+    } else {
+      etat.camx -= dx / etat.zoom; etat.camy -= dy / etat.zoom;
+      etat.camxC = etat.camx; etat.camyC = etat.camy;
+    }
+    dernierX = e.clientX; dernierY = e.clientY;
+    reveiller();
+    return;
+  }
+  var n = noeudSous(e.clientX, e.clientY);
+  if (n !== etat.survol) {
+    etat.survol = n;
+    if (n) impulserAutour(n, performance.now());
+    reveiller();
+  }
+  majSurvol(e, n);
+});
+
+cv.addEventListener('mouseleave', function () {
+  etat.survol = null; $('survol').classList.remove('on'); reveiller();
+});
+
+cv.addEventListener('wheel', function (e) {
+  e.preventDefault();
+  etat.vol = null;
+  /* le point du monde sous le curseur doit rester sous le curseur */
+  var mx = (e.clientX - L / 2) / etat.zoomC + etat.camxC;
+  var my = (e.clientY - H / 2) / etat.zoomC + etat.camyC;
+  var f = Math.exp(-e.deltaY * 0.0022);
+  var z = Math.min(Math.max(etat.zoomC * f, ZOOM_MIN), ZOOM_MAX);
+  etat.camxC = mx - (e.clientX - L / 2) / z;
+  etat.camyC = my - (e.clientY - H / 2) / z;
+  etat.zoomC = z;
+  reveiller();
+}, { passive: false });
+
+cv.addEventListener('click', function (e) {
+  if (aBouge) return;
+  var n = noeudSous(e.clientX, e.clientY);
+  if (!n) {
+    /* clic sur le fond : en plongée, on remonte d'un niveau ; sinon on désélectionne. */
+    if (etat.pile.length) { remonter(false); return; }
+    etat.selection = null; majFiche(null); fermerLiseuse(); reveiller(); return;
+  }
+  etat.selection = n;
+  impulserAutour(n, performance.now());
+  if (n.kind === 'fiche' && MODE === 'relie') { ouvrirLiseuse(n); }
+  else { fermerLiseuse(); majFiche(n); }
+  reveiller();
+});
+
+cv.addEventListener('dblclick', function (e) {
+  /* un sous-amas ? on y plonge (récursif). */
+  var m = marqueurSous(e.clientX, e.clientY);
+  if (m) { descendre(m.cle); return; }
+  var n = noeudSous(e.clientX, e.clientY);
+  if (n && n.kind === 'hub') { etat.selection = n; entrerGalaxie(n); return; }
+  if (n) {
+    etat.selection = n;
+    if (n.kind === 'fiche' && MODE === 'relie') ouvrirLiseuse(n); else { fermerLiseuse(); majFiche(n); }
+    volerVersNoeud(n);
+    return;
+  }
+  /* fond : en plongée, la remontée est gérée par le simple clic ; sinon recadrer. */
+  if (!etat.pile.length) recentrer();
+});
+
+/* --------------------------------------------------------- carte de survol */
+
+function majSurvol(e, n) {
+  var b = $('survol');
+  if (!n) { b.classList.remove('on'); return; }
+  var titre = '', meta = '';
+  if (n.kind === 'fiche') {
+    titre = n.fichier;
+    meta = (LIBELLE_SOURCE[n.data.source] || n.data.source) + ' · ' + n.data.zone +
+      ' · ↘ ' + n.data.inbound + ' ↗ ' + n.data.outbound;
+  } else if (n.kind === 'hub') {
+    titre = parGroupe[n.groupe].label;
+    meta = n.data.nb + ' fiches · galaxie';
+  } else if (n.kind === 'skill') {
+    titre = n.label; meta = 'skill · ' + (n.data.scope || '');
+  } else if (n.kind === 'routine') {
+    titre = n.label; meta = 'routine · ' + (n.data.schedule || n.data.kind || '');
+  } else if (n.kind === 'app') {
+    titre = n.label;
+    meta = 'application · risque ' + ((n.data.risk && n.data.risk.level) || 'inconnu');
+  } else {
+    titre = 'CLAUDE.md'; meta = 'le manuel opératoire — noyau du système';
+  }
+  b.innerHTML = '';
+  var t = document.createElement('b'); t.textContent = titre;
+  var m = document.createElement('div'); m.className = 'm'; m.textContent = meta;
+  var a = document.createElement('div'); a.className = 'aide';
+  a.textContent = 'clic pour inspecter · double-clic pour voler · Maj+glisser pour pivoter';
+  b.appendChild(t); b.appendChild(m); b.appendChild(a);
+  b.classList.add('on');
+  var x = e.clientX + 16, y = e.clientY + 16;
+  if (x + 310 > L) x = e.clientX - 310;
+  if (y + 110 > H) y = e.clientY - 100;
+  b.style.left = Math.max(6, x) + 'px';
+  b.style.top = Math.max(6, y) + 'px';
+}
+
+/* --------------------------------------------------- fiche d'inspection */
+
+var cible = null;
+
+function badge(txt, couleur) {
+  var s = document.createElement('span');
+  s.className = 'badge'; s.style.color = couleur;
+  var i = document.createElement('i');
+  s.appendChild(i);
+  s.appendChild(document.createTextNode(txt));
+  return s;
+}
+
+function cheminDe(n) {
+  if (!n) return '';
+  if (n.kind === 'fiche') return n.data.abs || '';
+  if (n.kind === 'skill') return n.data.fichier || n.data.path || '';
+  if (n.kind === 'routine') return n.data.definition || '';
+  if (n.kind === 'centre') return n.data.chemin || '';
+  return '';
+}
+
+function majFiche(n) {
+  var el = $('fiche');
+  if (!n) { el.classList.remove('on'); cible = null; return; }
+  cible = n;
+
+  $('f-titre').textContent = n.kind === 'hub' ? parGroupe[n.groupe].label
+    : (n.kind === 'fiche' ? n.fichier : n.label);
+
+  var bd = $('f-badges'); bd.innerHTML = '';
+  var meta = '', chemin = cheminDe(n);
+
+  if (n.kind === 'fiche') {
+    var g = parGroupe[n.groupe];
+    bd.appendChild(badge(LIBELLE_SOURCE[n.data.source] || n.data.source, g.couleur));
+    bd.appendChild(badge(n.data.zone === 'raw' ? 'brut' : (n.data.zone === 'outputs' ? 'livrable' : 'wiki'),
+      n.data.zone === 'raw' ? '#e8c268' : '#a78bfa'));
+    if (n.data.orphan) bd.appendChild(badge('orpheline', '#f87171'));
+    if (n.data.unprocessed) bd.appendChild(badge('non traité', '#f87171'));
+    var ext = (n.fichier.indexOf('.') >= 0 ? '.' + n.fichier.split('.').pop() : '');
+    meta = octetsFr(n.data.size) + ' · ' + ext + ' · ↘ ' + n.data.inbound + ' ↗ ' + n.data.outbound;
+  } else if (n.kind === 'hub') {
+    var gg = parGroupe[n.groupe];
+    bd.appendChild(badge(gg.fiches.length + ' fiches', gg.couleur));
+    bd.appendChild(badge(LIBELLE_SOURCE[gg.source] || gg.source, gg.couleur));
+    meta = 'galaxie · double-clic pour zoomer';
+  } else if (n.kind === 'skill') {
+    bd.appendChild(badge(n.data.scope || 'skill', '#ff9d4d'));
+    bd.appendChild(badge(n.data.layer || '—', '#ff9d4d'));
+    meta = courtLabel(n.data.description || '', 150);
+  } else if (n.kind === 'routine') {
+    bd.appendChild(badge(n.data.kind || 'routine', '#e8c268'));
+    meta = n.data.schedule || '';
+  } else if (n.kind === 'app') {
+    bd.appendChild(badge(n.data.transport || '—', '#7ea8d8'));
+    bd.appendChild(badge('risque : ' + ((n.data.risk && n.data.risk.level) || 'inconnu'),
+      (n.data.risk && n.data.risk.level) === 'action' ? '#f87171' : '#7ea8d8'));
+    meta = (n.data.risk && n.data.risk.why) ? courtLabel(n.data.risk.why, 150) : '';
+  } else {
+    bd.appendChild(badge('noyau', '#ff9d4d'));
+    meta = 'manuel opératoire du second cerveau';
+  }
+
+  $('f-meta').textContent = meta;
+  $('f-chemin').textContent = chemin ? cheminRelatif(chemin) : '—';
+
+  $('a-ouvrir').disabled = !chemin;
+  $('a-copier').disabled = !chemin;
+  $('a-explorer').style.display = (n.kind === 'hub') ? '' : 'none';
+  $('a-lire').style.display = (n.kind === 'fiche' && MODE === 'relie') ? '' : 'none';
+
+  /* âge : demandé au serveur (métadonnée seule, 1 ligne lue) */
+  if (MODE === 'relie' && chemin && (n.kind === 'fiche' || n.kind === 'centre')) {
+    var courant = n;
+    apiGet('/api/file', { path: chemin, from: 1, to: 1 }, function (d) {
+      if (cible !== courant || !d) return;
+      var age = ageFr(d.modifie);
+      if (age) $('f-meta').textContent = octetsFr(d.octets) + ' · ' + age +
+        (n.kind === 'fiche' ? ' · ' + (n.fichier.indexOf('.') >= 0 ? '.' + n.fichier.split('.').pop() : '') : '');
+    }, function () { /* silencieux : l'âge est un bonus */ });
+  }
+
+  /* connexions */
+  var cnx = $('f-cnx'); cnx.innerHTML = '';
+  var listeIds = [];
+  if (n.kind === 'fiche') {
+    listeIds = (voisins[n.id] || []).slice(0);
+    var g2 = parGroupe[n.groupe];
+    if (g2) listeIds.unshift(g2.hub.id);
+  } else if (n.kind === 'hub') {
+    listeIds = parGroupe[n.groupe].fiches.slice(0, 40).map(function (f) { return f.id; });
+  }
+  var vus = {}, nb = 0;
+  for (var i = 0; i < listeIds.length && nb < 24; i++) {
+    var id = listeIds[i];
+    if (vus[id] || !parId[id]) continue;
+    vus[id] = true; nb++;
+    cnx.appendChild(ligneConnexion(parId[id]));
+  }
+  $('f-cnx-titre').style.display = nb ? '' : 'none';
+  el.classList.add('on');
+}
+
+function ligneConnexion(v) {
+  var b = document.createElement('button');
+  var i = document.createElement('i');
+  i.style.background = v.kind === 'hub' ? parGroupe[v.groupe].couleur : (v.couleur || '#7ea8d8');
+  var s = document.createElement('span');
+  s.textContent = v.kind === 'hub' ? parGroupe[v.groupe].label : (v.fichier || v.label);
+  b.appendChild(i); b.appendChild(s);
+  b.title = 'Voler jusqu’à ce nœud';
+  b.onclick = function () { etat.selection = v; majFiche(v); volerVersNoeud(v); };
+  return b;
+}
+
+function cheminRelatif(abs) {
+  var racines = (graphe.sources || []).map(function (s) { return s.root; });
+  for (var i = 0; i < racines.length; i++) {
+    if (racines[i] && abs.indexOf(racines[i] + '/') === 0) return abs.slice(racines[i].length + 1);
+  }
+  return abs;
+}
+
+$('fiche-fermer').onclick = function () {
+  etat.selection = null; majFiche(null); reveiller();
+};
+
+$('a-ouvrir').onclick = function () {
+  var c = cheminDe(cible);
+  if (!c) return;
+  if (MODE === 'relie') {
+    apiPost('/api/open', { path: c, mode: 'reveal' }, function () { toast('Révélé dans le Finder'); },
+      function (s, d) { toast((d && d.erreur) || 'Ouverture impossible (' + s + ')'); });
+  } else {
+    window.location.href = 'vscode://file/' + c;
+  }
+};
+
+$('a-copier').onclick = function () {
+  var c = cheminDe(cible);
+  if (!c) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(c).then(function () { toast('Chemin copié'); },
+      function () { copierRepli(c); });
+  } else copierRepli(c);
+};
+
+$('a-voler').onclick = function () { volerVersNoeud(cible); };
+
+function copierRepli(c) {
+  var ta = document.createElement('textarea');
+  ta.value = c; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); toast('Chemin copié'); }
+  catch (e) { toast('Copie impossible'); }
+  document.body.removeChild(ta);
+}
+
+/* --------------------------------------------------------------- recherche */
+
+function filtrerLocal(q) {
+  q = q.trim().toLowerCase();
+  if (!q) { etat.trouves = null; reveiller(); return; }
+  var t = {};
+  for (var i = 0; i < noeuds.length; i++) {
+    var n = noeuds[i];
+    if ((n.label + ' ' + (n.fichier || '') + ' ' + n.id).toLowerCase().indexOf(q) >= 0) t[n.id] = true;
+  }
+  etat.trouves = t;
+  reveiller();
+}
+
+/* Retrouve le nœud du graphe correspondant à un résultat /api/search :
+   d'abord par identifiant (source/chemin), sinon par chemin absolu. */
+function noeudPourResultat(r) {
+  if (!r) return null;
+  if (r._node) return r._node;
+  var id = r.source + '/' + r.file;
+  if (parId[id]) return parId[id];
+  if (r.abs) {
+    for (var k in parId) {
+      var nd = parId[k];
+      if (nd.data && nd.data.abs && nd.data.abs === r.abs) return nd;
+    }
+  }
+  return null;
+}
+
+/* En-tête de section « @@ -12,5 @@ (3 avant, 40 après) » retiré pour l'affichage :
+   il est utile à un agent, pas à un lecteur humain. */
+function nettoyerSnippet(s) {
+  return String(s || '').replace(/^@@\s*-?\d+,\d+\s*@@\s*(\([^)]*\)\s*)?/, '');
+}
+
+/* Extrait rendu : échappé (contenu disque, jamais de confiance), puis les **termes**
+   marqués par le moteur passent en gras. Rien d'autre n'est interprété. */
+function extraitHtml(snippet) {
+  var s = echapper(nettoyerSnippet(snippet));
+  return s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+}
+
+function fermerResultats() { var b = $('resultats'); if (b) b.classList.remove('on'); }
+
+/* Ferme le panneau ET rétablit la vue (fin du surlignage des nœuds). */
+function fermerRecherche() {
+  fermerResultats();
+  etat.resultats = null; etat.selResultat = -1; etat.trouves = null;
+  reveiller();
+}
+
+function ligneResultat(r, i) {
+  var n = noeudPourResultat(r);
+  var couleur = COULEUR_SOURCE[r.source] || (n && n.couleur) || '#7ea8d8';
+  var libSrc = LIBELLE_SOURCE[r.source] || r.source || '';
+  var titre = String(r.file || '').split('/').pop() || r.heading || '(fiche)';
+
+  var b = document.createElement('button');
+  b.className = 'res'; b.setAttribute('data-i', i);
+  b.title = n ? 'Voler jusqu’à la fiche et l’ouvrir' : 'Fiche absente du graphe';
+
+  var t = document.createElement('div'); t.className = 'res-t';
+  var bd = document.createElement('span'); bd.className = 'res-badge'; bd.style.color = couleur;
+  var pt = document.createElement('i'); bd.appendChild(pt);
+  bd.appendChild(document.createTextNode(courtLabel(libSrc, 16)));
+  var tt = document.createElement('span'); tt.className = 'res-titre'; tt.textContent = titre;
+  t.appendChild(bd); t.appendChild(tt);
+  if (typeof r.score === 'number') {
+    var sc = document.createElement('span'); sc.className = 'res-score';
+    sc.textContent = (Math.round(r.score * 10) / 10).toString().replace('.', ',');
+    t.appendChild(sc);
+  }
+  b.appendChild(t);
+
+  if (r.snippet) {
+    var ex = document.createElement('div'); ex.className = 'res-extrait';
+    ex.innerHTML = extraitHtml(r.snippet);
+    b.appendChild(ex);
+  }
+  b.onclick = function () { etat.selResultat = i; majSelResultat(); ouvrirResultat(i); };
+  return b;
+}
+
+function afficherResultats(q, d) {
+  var box = $('resultats'); if (!box) return;
+  box.innerHTML = '';
+  var res = ((d && d.results) || []).slice(0, 12);
+  etat.resultats = res; etat.selResultat = -1;
+
+  var tete = document.createElement('div'); tete.className = 'res-tete';
+  if (!res.length) {
+    tete.textContent = 'Aucun résultat';
+    box.appendChild(tete);
+    var vide = document.createElement('div'); vide.className = 'res-vide';
+    vide.textContent = 'Reformuler la requête, ou explorer la carte à la main.';
+    box.appendChild(vide);
+    box.classList.add('on');
+    return;
+  }
+  if (d && d.confidence === 'low') {
+    tete.className = 'res-tete faible';
+    tete.textContent = res.length + ' résultat(s) · aucun résultat sûr';
+  } else {
+    tete.textContent = res.length + ' résultat(s)';
+  }
+  box.appendChild(tete);
+  for (var i = 0; i < res.length; i++) box.appendChild(ligneResultat(res[i], i));
+  box.classList.add('on');
+}
+
+function majSelResultat() {
+  var box = $('resultats'); if (!box) return;
+  var lignes = box.getElementsByClassName('res');
+  for (var i = 0; i < lignes.length; i++) {
+    var sel = (+lignes[i].getAttribute('data-i')) === etat.selResultat;
+    lignes[i].classList.toggle('sel', sel);
+    if (sel && lignes[i].scrollIntoView) lignes[i].scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function bougerSelectionResultat(delta) {
+  var res = etat.resultats; if (!res || !res.length) return;
+  var i = etat.selResultat + delta;
+  if (i < 0) i = res.length - 1;
+  if (i >= res.length) i = 0;
+  etat.selResultat = i;
+  majSelResultat();
+}
+
+function ouvrirResultat(i) {
+  var r = etat.resultats && etat.resultats[i]; if (!r) return;
+  var n = noeudPourResultat(r);
+  if (!n) { toast('Cette fiche n’est pas présente dans le graphe'); return; }
+  etat.selection = n;
+  if (MODE === 'relie') naviguerVersFiche(n);   // vole + ouvre la liseuse (PDF géré)
+  else { volerVersNoeud(n); majFiche(n); }
+}
+
+/* Recherche plein texte débouncée : allume les nœuds ET remplit le panneau. */
+function lancerRechercheServeur(q) {
+  if (!q) return;
+  apiGet('/api/search', { q: q, k: 14 }, function (d) {
+    if ($('q').value.trim() !== q) return;      // réponse périmée : on l'ignore
+    if (!d) { toast('Aucun résultat'); return; }
+    var res = d.results || [], t = {}, nb = 0;
+    res.forEach(function (r) {
+      var n = noeudPourResultat(r);
+      if (n && !t[n.id]) { t[n.id] = true; nb++; }
+    });
+    etat.trouves = nb ? t : null;               // aucun résultat : carte laissée nette
+    afficherResultats(q, d);
+    reveiller();
+  }, function (s, dd) { toast((dd && dd.erreur) || 'Recherche impossible (' + s + ')'); });
+}
+
+/* Repli hors ligne (file://) : filtrage par nom, résultats bâtis depuis le graphe. */
+function rechercheLocale(q) {
+  filtrerLocal(q);
+  var ql = q.toLowerCase(), res = [];
+  for (var i = 0; i < noeuds.length && res.length < 12; i++) {
+    var n = noeuds[i];
+    if (n.kind !== 'fiche') continue;
+    if ((n.label + ' ' + (n.fichier || '') + ' ' + n.id).toLowerCase().indexOf(ql) < 0) continue;
+    res.push({ source: n.data.source, file: n.fichier, abs: n.data.abs, _node: n, snippet: '' });
+  }
+  afficherResultats(q, { results: res, confidence: 'high' });
+}
+
+var minuterieRecherche = null;
+$('q').addEventListener('input', function () {
+  var q = this.value.trim();
+  if (minuterieRecherche) { clearTimeout(minuterieRecherche); minuterieRecherche = null; }
+  if (!q) { fermerRecherche(); return; }
+  if (MODE !== 'relie') { rechercheLocale(q); return; }
+  filtrerLocal(q);                              // feedback instantané sur les nœuds
+  minuterieRecherche = setTimeout(function () { lancerRechercheServeur(q); }, 250);
+});
+$('q').addEventListener('keydown', function (e) {
+  var res = etat.resultats;
+  if (e.key === 'ArrowDown') { e.preventDefault(); bougerSelectionResultat(1); return; }
+  if (e.key === 'ArrowUp') { e.preventDefault(); bougerSelectionResultat(-1); return; }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (res && res.length) ouvrirResultat(etat.selResultat >= 0 ? etat.selResultat : 0);
+    else lancerRechercheServeur(this.value.trim());
+    return;
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault(); e.stopPropagation();    // ne pas fermer la liseuse par ricochet
+    this.value = ''; fermerRecherche(); this.blur();
+  }
+});
+
+window.addEventListener('keydown', function (e) {
+  /* Cmd/Ctrl+F pendant la lecture : recherche DANS la fiche ouverte. */
+  if ((e.key === 'f' || e.key === 'F') && (e.metaKey || e.ctrlKey) && etat.ficheLue) {
+    e.preventDefault();
+    var lq = $('lz-q'); if (lq) { lq.focus(); lq.select(); }
+    return;
+  }
+  var dansChamp = document.activeElement === $('q') || document.activeElement === $('lz-q');
+  if ((e.key === 'f' || e.key === 'F') && !dansChamp && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault(); basculerPleinEcran(); return;
+  }
+  if (e.key === '/' && !dansChamp) {
+    e.preventDefault(); $('q').focus(); $('q').select();
+  } else if (e.key === 'Escape') {
+    /* priorité : liseuse d'abord, puis remontée d'un niveau, puis nettoyage. */
+    if (etat.ficheLue) { fermerLiseuse(); reveiller(); return; }
+    if (etat.pile.length) { remonter(true); return; }
+    etat.selection = null; etat.survol = null; etat.trouves = null;
+    $('q').value = ''; $('survol').classList.remove('on');
+    majFiche(null); reveiller();
+  }
+});
+
+/* ------------------------------------------------------------ panneau : UI */
+
+var NOM_LAYOUT = { force: 'Force', circle: 'Cercle', hex: 'Hex', rings: 'Anneaux' };
+
+/** Retards de la vague : plus un nœud est loin du noyau, plus il part tard. */
+function calculerRetards() {
+  var i, n, d, dmax = 1;
+  for (i = 0; i < noeuds.length; i++) {
+    n = noeuds[i];
+    d = Math.sqrt((n.wx || 0) * (n.wx || 0) + (n.wy || 0) * (n.wy || 0));
+    n._d = d;
+    if (d > dmax) dmax = d;
+  }
+  for (i = 0; i < noeuds.length; i++) noeuds[i].retard = ETALEMENT * (noeuds[i]._d / dmax);
+}
+
+function choisirLayout(lay, silencieux) {
+  if (lay === etat.layout) return;
+  etat.layoutPrec = etat.layout;
+  etat.layout = lay;
+  calculerRetards();
+  etat.transT0 = performance.now();
+  etat.transFin = etat.transT0 + DUREE_TRANS + ETALEMENT + 60;
+  if (lay === 'force') etat.chaudJusqua = performance.now() + 6000;
+  var b = $('layouts').getElementsByTagName('button');
+  for (var i = 0; i < b.length; i++) b[i].classList.toggle('actif', b[i].getAttribute('data-lay') === lay);
+  if (!silencieux) toast('Disposition ' + NOM_LAYOUT[lay]);
+  reveiller();
+}
+
+var bl = $('layouts').getElementsByTagName('button');
+for (var i0 = 0; i0 < bl.length; i0++) {
+  bl[i0].onclick = (function (el) {
+    return function () { choisirLayout(el.getAttribute('data-lay')); };
+  })(bl[i0]);
+}
+
+var bv = $('vues').getElementsByTagName('button');
+for (var i1 = 0; i1 < bv.length; i1++) {
+  bv[i1].onclick = (function (el) {
+    return function () {
+      var v = el.getAttribute('data-vue');
+      if (v === etat.vue) return;
+      etat.vue = v;
+      for (var j = 0; j < bv.length; j++) bv[j].classList.toggle('actif', bv[j] === el);
+      etat.selection = null; etat.survol = null; majFiche(null);
+      reconstruireModele();
+      majZoomBase();
+      etat.chaudJusqua = performance.now() + 4000;
+      toast(v === 'sources' ? 'Vue par sources' : 'Vue par dossiers');
+      reveiller();
+    };
+  })(bv[i1]);
+}
+
+$('s-rot').oninput = function () {
+  etat.rotation = parseFloat(this.value);
+  $('v-rot').textContent = etat.rotation.toFixed(2).replace('.', ',');
+  reveiller();
+};
+$('s-res').oninput = function () {
+  etat.ressorts = parseFloat(this.value);
+  $('v-res').textContent = etat.ressorts.toFixed(2).replace('.', ',');
+  etat.chaudJusqua = performance.now() + 4000;
+  reveiller();
+};
+$('s-tai').oninput = function () {
+  etat.taille = parseFloat(this.value);
+  $('v-tai').textContent = etat.taille.toFixed(2).replace('.', ',');
+  reveiller();
+};
+$('c-noms').onchange = function () { etat.noms = this.checked; reveiller(); };
+$('b-deployer').onclick = function () {
+  if (etat.pile.length) { aplatirNiveau(); return; }
+  etat.replies = {}; toast('Galaxies déployées'); reveiller();
+};
+$('b-replier').onclick = function () {
+  if (etat.pile.length) { remonter(true); return; }
+  groupes.forEach(function (g) { etat.replies[g.cle] = true; });
+  toast('Galaxies repliées'); reveiller();
+};
+$('b-recentrer').onclick = recentrer;
+$('b-figer').onclick = enregistrerReglages;
+$('b-plein').onclick = basculerPleinEcran;
+$('a-explorer').onclick = function () { if (cible && cible.kind === 'hub') entrerGalaxie(cible); };
+$('a-lire').onclick = function () { if (cible && cible.kind === 'fiche') ouvrirLiseuse(cible); };
+
+/* ============================================================ liseuse (lecture)
+   Convertisseur Markdown → HTML maison, sans dépendance. Il ne couvre que ce
+   que portent nos fiches (titres, gras/italique, listes, citations, blocs de
+   code, callouts, tableaux, wikiliens). TOUT le texte issu du fichier est
+   ÉCHAPPÉ : le contenu vient du disque, jamais on ne lui fait confiance pour
+   du HTML. Seules les balises que NOUS produisons entrent dans le rendu. */
+
+function echapper(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+var ETIQ_CALLOUT = {
+  NOTE: 'Note', INFO: 'Info', TIP: 'Astuce', IMPORTANT: 'Important',
+  WARNING: 'Attention', CAUTION: 'Prudence', DANGER: 'Danger',
+};
+
+/** Résout un wikilien vers un nœud fiche, en préférant la même source que la
+    fiche courante ; renvoie null si aucune fiche ne correspond (lien cassé). */
+function resoudreWiki(cible, ctx) {
+  var c = String(cible).trim().replace(/\\/g, '/');
+  var h = c.indexOf('#'); if (h >= 0) c = c.slice(0, h);
+  c = c.trim();
+  if (!c) return null;
+  if (parId[c] && parId[c].kind === 'fiche') return parId[c];
+  var base = c.split('/').pop().replace(/\.(md|markdown|txt|pdf)$/i, '').toLowerCase();
+  var arr = indexWiki[base];
+  if (!arr || !arr.length) return null;
+  if (arr.length === 1) return arr[0];
+  if (ctx && ctx.data && ctx.data.source) {
+    for (var i = 0; i < arr.length; i++) {
+      if (arr[i].data && arr[i].data.source === ctx.data.source) return arr[i];
+    }
+  }
+  return arr[0];
+}
+
+/** Rendu des fragments « en ligne » (gras, italique, code, liens, wikiliens).
+    On extrait d'abord code/liens/wikiliens en jetons sûrs, on échappe le reste,
+    puis on applique gras/italique et on réinjecte les jetons. */
+function enligne(txt, ctx) {
+  var jetons = [];
+  function pousser(html) { jetons.push(html); return ' ' + (jetons.length - 1) + ' '; }
+
+  txt = String(txt).replace(/`([^`]+)`/g, function (_, c) {
+    return pousser('<code>' + echapper(c) + '</code>');
+  });
+  txt = txt.replace(/\[\[([^\]]+)\]\]/g, function (_, inner) {
+    var barre = inner.indexOf('|');
+    var cible = (barre >= 0 ? inner.slice(0, barre) : inner).trim();
+    var aff = (barre >= 0 ? inner.slice(barre + 1) : inner).trim();
+    var node = resoudreWiki(cible, ctx);
+    if (node) return pousser('<a class="wl" data-node="' + echapper(node.id) + '">' + echapper(aff) + '</a>');
+    return pousser('<span class="wl cassee" title="fiche introuvable">' + echapper(aff) + '</span>');
+  });
+  txt = txt.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function (_, t, u) {
+    if (/^(https?:|mailto:)/i.test(u)) {
+      return pousser('<a href="' + echapper(u) + '" target="_blank" rel="noreferrer noopener">' + echapper(t) + '</a>');
+    }
+    return pousser(echapper(t));
+  });
+
+  txt = echapper(txt);
+  txt = txt.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  txt = txt.replace(/(^|[^\w*])\*([^*\s][^*]*?)\*(?!\w)/g, '$1<em>$2</em>');
+  txt = txt.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  txt = txt.replace(/ (\d+) /g, function (_, i) { return jetons[+i]; });
+  return txt;
+}
+
+function decoupeLigneTable(l) {
+  var s = l.trim().replace(/^\|/, '').replace(/\|$/, '');
+  return s.split('|').map(function (c) { return c.trim(); });
+}
+
+/** Rend une liste (à puces / numérotée) avec un niveau d'imbrication. */
+function rendreListe(rl, ctx) {
+  var out = [], ordered = /^\s*\d+[.)]\s/.test(rl[0]);
+  out.push(ordered ? '<ol>' : '<ul>');
+  var i = 0;
+  while (i < rl.length) {
+    var m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(rl[i]);
+    if (!m) { i++; continue; }
+    var texte = m[3], sous = [];
+    i++;
+    while (i < rl.length) {
+      var m2 = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(rl[i]);
+      if (m2) {
+        var ind2 = m2[1].replace(/\t/g, '  ').length;
+        if (ind2 >= 2) { sous.push(rl[i].replace(/^\s{2}/, '')); i++; continue; }
+        break;
+      }
+      if (/^\s{2,}\S/.test(rl[i])) { texte += ' ' + rl[i].trim(); i++; continue; }
+      break;
+    }
+    var li = '<li>' + enligne(texte, ctx);
+    if (sous.length) li += rendreListe(sous, ctx);
+    li += '</li>';
+    out.push(li);
+  }
+  out.push(ordered ? '</ol>' : '</ul>');
+  return out.join('');
+}
+
+function mdToHtml(src, ctx) {
+  var lignes = String(src).replace(/\r\n?/g, '\n').split('\n');
+  var out = [], i = 0, n = lignes.length;
+
+  if (lignes[0] !== undefined && lignes[0].trim() === '---') {   // frontmatter YAML : ignoré
+    var j = 1; while (j < n && lignes[j].trim() !== '---') j++;
+    if (j < n) i = j + 1;
+  }
+
+  var estListe = function (s) { return /^\s*([-*+]\s+|\d+[.)]\s+)/.test(s); };
+  var estHr = function (s) { return /^(-{3,}|\*{3,}|_{3,})$/.test(s); };
+
+  for (; i < n; i++) {
+    var l = lignes[i], t = l.trim();
+
+    if (/^```/.test(t)) {                                        // bloc de code
+      var buf = []; i++;
+      while (i < n && !/^```/.test(lignes[i].trim())) { buf.push(lignes[i]); i++; }
+      out.push('<pre><code>' + echapper(buf.join('\n')) + '</code></pre>');
+      continue;
+    }
+    if (t === '') continue;
+
+    var mh = /^(#{1,6})\s+(.*)$/.exec(t);                        // titre
+    if (mh) { var niv = mh[1].length; out.push('<h' + niv + '>' + enligne(mh[2], ctx) + '</h' + niv + '>'); continue; }
+
+    if (estHr(t)) { out.push('<hr>'); continue; }
+
+    var mc = /^>\s*\[!(\w+)\]\s*(.*)$/.exec(t);                  // callout
+    if (mc) {
+      var typ = mc[1].toUpperCase(), titre = mc[2], cb = [];
+      i++;
+      while (i < n && /^\s*>/.test(lignes[i])) { cb.push(lignes[i].replace(/^\s*>\s?/, '')); i++; }
+      i--;
+      out.push('<div class="callout callout-' + typ.toLowerCase() + '"><div class="callout-t">' +
+        echapper(ETIQ_CALLOUT[typ] || typ) + (titre ? ' — ' + enligne(titre, ctx) : '') + '</div>' +
+        (cb.length ? mdToHtml(cb.join('\n'), ctx) : '') + '</div>');
+      continue;
+    }
+
+    if (/^\s*>/.test(l)) {                                       // citation
+      var qb = [];
+      while (i < n && /^\s*>/.test(lignes[i])) { qb.push(lignes[i].replace(/^\s*>\s?/, '')); i++; }
+      i--;
+      out.push('<blockquote>' + mdToHtml(qb.join('\n'), ctx) + '</blockquote>');
+      continue;
+    }
+
+    if (/\|/.test(l) && i + 1 < n &&                            // tableau
+        /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/.test(lignes[i + 1])) {
+      var head = decoupeLigneTable(l); i += 2; var rows = [];
+      while (i < n && lignes[i].indexOf('|') >= 0 && lignes[i].trim() !== '') { rows.push(decoupeLigneTable(lignes[i])); i++; }
+      i--;
+      var th = '<tr>' + head.map(function (c) { return '<th>' + enligne(c, ctx) + '</th>'; }).join('') + '</tr>';
+      var tb = rows.map(function (r) {
+        return '<tr>' + r.map(function (c) { return '<td>' + enligne(c, ctx) + '</td>'; }).join('') + '</tr>';
+      }).join('');
+      out.push('<table><thead>' + th + '</thead><tbody>' + tb + '</tbody></table>');
+      continue;
+    }
+
+    if (estListe(l)) {                                          // liste
+      var lb = [];
+      while (i < n) {
+        if (estListe(lignes[i]) || /^\s{2,}\S/.test(lignes[i])) { lb.push(lignes[i]); i++; }
+        else if (lignes[i].trim() === '' && i + 1 < n && estListe(lignes[i + 1])) { i++; }
+        else break;
+      }
+      i--;
+      out.push(rendreListe(lb, ctx));
+      continue;
+    }
+
+    var par = [l];                                             // paragraphe
+    while (i + 1 < n) {
+      var nx = lignes[i + 1], nt = nx.trim();
+      if (nt === '' || /^(#{1,6})\s/.test(nt) || /^```/.test(nt) || /^\s*>/.test(nx) ||
+          estListe(nx) || estHr(nt) || nx.indexOf('|') >= 0) break;
+      par.push(nx); i++;
+    }
+    out.push('<p>' + enligne(par.join(' '), ctx) + '</p>');
+  }
+  return out.join('\n');
+}
+
+/* ---------------------------------------------------- panneau de lecture (DOM) */
+
+function estPdf(n) { return !!(n && (/\.pdf$/i.test(n.id) || /\.pdf$/i.test((n.data && n.data.abs) || ''))); }
+
+function noteTronque(d) {
+  var el = document.createElement('div');
+  el.className = 'lz-tronque';
+  el.textContent = 'Aperçu tronqué' + (d && d.lignesTotales ? ' (' + d.lignesTotales + ' lignes au total)' : '') +
+    '. Ouvrir dans l’éditeur pour la suite.';
+  return el;
+}
+
+function ligneRetro(v) {
+  var b = document.createElement('button');
+  var i = document.createElement('i');
+  i.style.background = v.kind === 'hub' ? parGroupe[v.groupe].couleur : (v.couleur || '#7ea8d8');
+  var s = document.createElement('span');
+  s.textContent = v.fichier || v.label;
+  b.appendChild(i); b.appendChild(s);
+  b.title = 'Lire cette fiche';
+  b.onclick = function () { naviguerVersFiche(v); };
+  return b;
+}
+
+function majRetroliens(n) {
+  var zone = $('lz-back'), liste = $('lz-back-liste');
+  liste.innerHTML = '';
+  var vus = {}, nb = 0;
+  for (var i = 0; i < liens.length; i++) {
+    if (liens[i].b !== n || liens[i].broken) continue;
+    var a = liens[i].a;
+    if (!a || a.kind !== 'fiche' || vus[a.id]) continue;
+    vus[a.id] = true; nb++;
+    liste.appendChild(ligneRetro(a));
+    if (nb >= 40) break;
+  }
+  zone.style.display = nb ? '' : 'none';
+}
+
+function cablerLiensLiseuse() {
+  var corps = $('lz-corps');
+  corps.onclick = function (e) {
+    var a = e.target.closest ? e.target.closest('a.wl[data-node]') : null;
+    if (!a) return;
+    e.preventDefault();
+    var node = parId[a.getAttribute('data-node')];
+    if (node) naviguerVersFiche(node);
+  };
+}
+
+function ouvrirLiseuse(n) {
+  if (!n || n.kind !== 'fiche') return;
+  etat.ficheLue = n;
+  etat.selection = n;
+  reinitTrouver();                               // nouvelle fiche : recherche intra-fiche à zéro
+  var g = parGroupe[n.groupe];
+
+  $('lz-titre').textContent = n.fichier;
+  var bd = $('lz-badges'); bd.innerHTML = '';
+  bd.appendChild(badge(LIBELLE_SOURCE[n.data.source] || n.data.source, (g && g.couleur) || '#7ea8d8'));
+  bd.appendChild(badge(n.data.zone === 'raw' ? 'brut' : (n.data.zone === 'outputs' ? 'livrable' : 'wiki'),
+    n.data.zone === 'raw' ? '#e8c268' : '#a78bfa'));
+  if (estPdf(n)) bd.appendChild(badge('PDF', '#f59e0b'));
+  var ext = (n.fichier.indexOf('.') >= 0 ? '.' + n.fichier.split('.').pop() : '');
+  $('lz-meta').textContent = octetsFr(n.data.size) + ' · ' + ext +
+    ' · ↘ ' + n.data.inbound + ' ↗ ' + n.data.outbound;
+  var chemin = cheminDe(n);
+  $('lz-chemin').textContent = chemin ? cheminRelatif(chemin) : '—';
+  $('lz-finder').textContent = estPdf(n) ? 'Ouvrir le PDF (Finder)' : 'Révéler dans le Finder';
+  $('lz-editeur').style.display = estPdf(n) ? 'none' : '';
+  $('lz-editer').style.display = estPdf(n) ? 'none' : '';   // pas d'édition intégrée d'un PDF
+  etat.edition = null;                            // on repart toujours en mode lecture
+  $('lz-brouillon').style.display = 'none';      // masqué tant que le statut n'est pas lu
+
+  document.body.classList.add('lecture');
+  $('liseuse').classList.add('on');
+  $('fiche').classList.remove('on');
+
+  var corps = $('lz-corps');
+  corps.innerHTML = '<div class="lz-charge">Chargement…</div>';
+  cablerLiensLiseuse();
+  majRetroliens(n);
+
+  if (MODE !== 'relie') {
+    corps.innerHTML = '<p class="lz-vide">Lecture du contenu indisponible hors ligne. ' +
+      'Lancer <code>node UI/server.js</code> pour lire les fiches.</p>';
+    return;
+  }
+  if (estPdf(n)) chargerPdf(n); else chargerMarkdown(n);
+  reveiller();
+}
+
+function chargerMarkdown(n) {
+  var corps = $('lz-corps'), chemin = cheminDe(n);
+  apiGet('/api/file', { path: chemin, from: 1, to: 4000 }, function (d) {
+    if (etat.ficheLue !== n) return;
+    if (!d || d.contenu == null) { corps.innerHTML = '<p class="lz-vide">Contenu illisible.</p>'; return; }
+    corps.innerHTML = mdToHtml(d.contenu, n);
+    if (d.tronque) corps.appendChild(noteTronque(d));
+    majBandeauBrouillon(n, statutDuMarkdown(d.contenu));   // bandeau « brouillon » selon le frontmatter
+    corps.scrollTop = 0;
+  }, function (s, d) {
+    if (etat.ficheLue !== n) return;
+    corps.innerHTML = '<p class="lz-vide">' + echapper((d && d.erreur) || ('Lecture impossible (' + s + ').')) + '</p>';
+  });
+}
+
+/* ---- Éditeur intégré : éditer le Markdown d'une fiche dans la liseuse et
+   l'enregistrer via POST /api/save (confiné, .md, copie de secours dans
+   .brain/edits/, écriture atomique). Bloqué si la fiche a été TRONQUÉE au
+   chargement : on ne réenregistre jamais un contenu partiel. La sauvegarde
+   modifie le fichier → le fs.watch du serveur relance l'indexation tout seul. */
+function entrerEdition() {
+  var n = etat.ficheLue; if (!n || estPdf(n) || MODE !== 'relie') return;
+  var chemin = cheminDe(n); if (!chemin) return;
+  apiGet('/api/file', { path: chemin, from: 1, to: 4000 }, function (d) {
+    if (etat.ficheLue !== n) return;
+    if (!d || d.contenu == null) { toast('Contenu illisible.'); return; }
+    if (d.tronque) { toast('Fiche trop longue pour l’édition intégrée — ouvrir dans l’éditeur.'); return; }
+    etat.edition = n;
+    var corps = $('lz-corps'); corps.innerHTML = '';
+    var barre = document.createElement('div');
+    barre.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap';
+    var save = document.createElement('button'); save.className = 'bt'; save.textContent = '💾 Enregistrer';
+    var annul = document.createElement('button'); annul.className = 'bt'; annul.textContent = 'Annuler';
+    var info = document.createElement('span');
+    info.style.cssText = 'font-size:11px;opacity:.6';
+    info.textContent = 'Markdown brut — écriture atomique + copie de secours';
+    barre.appendChild(save); barre.appendChild(annul); barre.appendChild(info);
+    var ta = document.createElement('textarea'); ta.id = 'lz-edit';
+    ta.value = d.contenu; ta.spellcheck = false;
+    ta.style.cssText = 'width:100%;height:62vh;box-sizing:border-box;resize:vertical;' +
+      'font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;padding:12px;' +
+      'background:rgba(0,0,0,.28);color:inherit;border:1px solid rgba(255,255,255,.14);' +
+      'border-radius:8px;outline:none';
+    corps.appendChild(barre); corps.appendChild(ta); ta.focus();
+    save.onclick = function () { enregistrerEdition(n, ta.value, save); };
+    annul.onclick = function () { etat.edition = null; chargerMarkdown(n); };
+  }, function (s, d) {
+    toast((d && d.erreur) || ('Lecture impossible (' + s + ').'));
+  });
+}
+
+function enregistrerEdition(n, contenu, bouton) {
+  if (bouton) { bouton.disabled = true; bouton.textContent = '… enregistrement'; }
+  apiPost('/api/save', { path: cheminDe(n), contenu: contenu }, function () {
+    toast('Enregistré ✓ — réindexation en cours');
+    etat.edition = null;
+    if (etat.ficheLue === n) chargerMarkdown(n);
+  }, function (s, d) {
+    if (bouton) { bouton.disabled = false; bouton.textContent = '💾 Enregistrer'; }
+    toast((d && d.erreur) || ('Enregistrement impossible (' + s + ').'));
+  });
+}
+
+function chargerPdf(n) {
+  var corps = $('lz-corps');
+  apiGet('/api/pdftext', { id: n.id }, function (d) {
+    if (etat.ficheLue !== n) return;
+    if (d && d.disponible && d.contenu) {
+      corps.innerHTML = '<div class="lz-pdf">Document PDF — extrait texte du cache (le binaire n’est pas rendu ici) :</div>';
+      var pre = document.createElement('pre'); pre.className = 'lz-extrait';
+      pre.textContent = d.contenu;
+      corps.appendChild(pre);
+      if (d.tronque) corps.appendChild(noteTronque(d));
+    } else {
+      corps.innerHTML = '<div class="lz-pdf">Document PDF — le rendu binaire n’est pas affiché ici.</div>' +
+        '<p class="lz-vide">Aucun extrait texte en cache. Utiliser « Ouvrir le PDF (Finder) ».</p>';
+    }
+    corps.scrollTop = 0;
+  }, function () {
+    if (etat.ficheLue !== n) return;
+    corps.innerHTML = '<p class="lz-vide">Extrait PDF indisponible.</p>';
+  });
+}
+
+/* ------------------------------------------ boucle de relecture des brouillons
+   Une fiche « statut: draft » porte un bandeau bien visible dans la liseuse et un
+   bouton « Promouvoir en canon » (POST /api/promote). Le statut est lu à la volée
+   dans le frontmatter du Markdown chargé — toujours à jour, même si le graphe ne
+   le connaît pas encore. En mode dégradé (file://), le bouton est caché : pas de
+   serveur, pas de promotion. */
+
+function statutDuMarkdown(src) {
+  var l = String(src).replace(/\r\n?/g, '\n').split('\n');
+  if (l[0] !== '---') return null;
+  for (var i = 1; i < l.length; i++) {
+    if (l[i] === '---' || l[i] === '...') break;
+    var m = /^statut\s*:\s*['"]?([A-Za-z]+)/.exec(l[i]);
+    if (m) { var v = m[1].toLowerCase(); return (v === 'draft' || v === 'canon') ? v : null; }
+  }
+  return null;
+}
+
+function majBandeauBrouillon(n, statut) {
+  var el = $('lz-brouillon'); if (!el) return;
+  if (n && n.data) n.data.statut = statut;      // synchronise nœud, compteur et cerne
+  if (n) n.draft = (statut === 'draft');
+  var estDraft = (statut === 'draft');
+  el.style.display = estDraft ? '' : 'none';
+  if (estDraft) {
+    var btn = $('lz-promouvoir'), txt = $('lz-brouillon-txt');
+    if (MODE === 'relie') {
+      btn.style.display = ''; btn.disabled = false;
+      txt.textContent = 'Brouillon — à relire';
+    } else {
+      btn.style.display = 'none';
+      txt.textContent = 'Brouillon — promotion impossible hors ligne';
+    }
+  }
+  majCompteurBrouillons();
+}
+
+function majCompteurBrouillons() {
+  var pill = $('brouillons-pill'); if (!pill) return;
+  var nb = 0;
+  for (var i = 0; i < noeuds.length; i++) {
+    var n = noeuds[i];
+    if (n.kind === 'fiche' && n.data && n.data.statut === 'draft') nb++;
+  }
+  if (nb > 0) {
+    pill.textContent = nb + ' brouillon' + (nb > 1 ? 's' : '');
+    pill.style.display = '';
+  } else pill.style.display = 'none';
+}
+
+/* Liste les brouillons dans le panneau de résultats (réutilisé tel quel) et les
+   surligne sur la carte. */
+function listerBrouillons() {
+  var res = [], t = {};
+  for (var i = 0; i < noeuds.length; i++) {
+    var n = noeuds[i];
+    if (n.kind !== 'fiche' || !(n.data && n.data.statut === 'draft')) continue;
+    res.push({ source: n.data.source, file: n.fichier, abs: n.data.abs, _node: n, snippet: '' });
+    t[n.id] = true;
+  }
+  if (!res.length) { toast('Aucun brouillon à relire'); return; }
+  etat.trouves = t;
+  afficherResultats('brouillons', { results: res, confidence: 'high' });
+  reveiller();
+}
+
+$('brouillons-pill').onclick = function () { listerBrouillons(); };
+
+$('lz-promouvoir').onclick = function () {
+  var n = etat.ficheLue, c = n && cheminDe(n);
+  if (!c) return;
+  if (MODE !== 'relie') { toast('Promotion impossible hors ligne'); return; }
+  var btn = this; btn.disabled = true;
+  apiPost('/api/promote', { path: c }, function () {
+    btn.disabled = false;
+    toast('Promue en canon');
+    if (etat.ficheLue === n) chargerMarkdown(n);   // recharge : le bandeau disparaît
+  }, function (s, d) {
+    btn.disabled = false;
+    toast((d && d.erreur) || ('Promotion impossible (' + s + ')'));
+  });
+};
+
+function fermerLiseuse() {
+  if (!etat.ficheLue && !document.body.classList.contains('lecture')) return;
+  var bb = $('lz-brouillon'); if (bb) bb.style.display = 'none';
+  etat.ficheLue = null;
+  etat.lzHits = null; etat.lzHitIdx = -1;        // occurrences oubliées avec la fiche
+  var lq = $('lz-q'); if (lq) lq.value = '';
+  var cpt = $('lz-compteur'); if (cpt) cpt.textContent = '';
+  var el = $('liseuse'); if (el) el.classList.remove('on');
+  document.body.classList.remove('lecture');
+}
+
+function naviguerVersFiche(n) {
+  if (!n || n.kind !== 'fiche') return;
+  etat.selection = n;
+  /* cible hors du sous-univers actuellement plongé : on remonte à l'ensemble
+     pour que sa position de base redevienne valide. */
+  if (etat.pile.length && !n._off) remonterA(0);
+  if (n._off && etat.galaxie) {
+    var hub = etat.galaxie.hub;
+    majOrientation();
+    projeter(hub.wx + n._off.dx, hub.wy + n._off.dy, 0, _pr);
+    volerVers(_pr.x, _pr.y, Math.max(2.5, Math.min(16, 70 / Math.max(n.r, 2))));
+  } else volerVersNoeud(n);
+  if (MODE === 'relie') ouvrirLiseuse(n); else majFiche(n);
+  reveiller();
+}
+
+$('lz-fermer').onclick = function () { fermerLiseuse(); reveiller(); };
+$('lz-editer').onclick = entrerEdition;
+$('lz-voler').onclick = function () { if (etat.ficheLue) volerVersNoeud(etat.ficheLue); };
+$('lz-editeur').onclick = function () {
+  var n = etat.ficheLue, c = n && cheminDe(n); if (!c) return;
+  if (MODE === 'relie') {
+    apiPost('/api/open', { path: c, mode: 'edit' }, function () { toast('Ouvert dans l’éditeur'); },
+      function (s, d) { toast((d && d.erreur) || 'Ouverture impossible (' + s + ')'); });
+  } else window.location.href = 'vscode://file/' + c;
+};
+$('lz-finder').onclick = function () {
+  var n = etat.ficheLue, c = n && cheminDe(n); if (!c) return;
+  if (MODE === 'relie') {
+    apiPost('/api/open', { path: c, mode: 'reveal' }, function () { toast('Révélé dans le Finder'); },
+      function (s, d) { toast((d && d.erreur) || 'Ouverture impossible (' + s + ')'); });
+  } else toast('Indisponible hors ligne');
+};
+
+/* ------------------------------------------ recherche DANS la fiche (liseuse)
+   Surligne toutes les occurrences du texte rendu, insensible à la casse ET aux
+   accents, avec compteur « 3/7 » et navigation précédent/suivant. On n'altère
+   que des nœuds texte (jamais la structure) : les wikiliens et le rendu restent
+   intacts — un [[lien]] dont le libellé contient le terme reste cliquable. */
+
+function plier(s) {
+  return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+function majCompteurTrouver() {
+  var el = $('lz-compteur'); if (!el) return;
+  var q = $('lz-q') ? $('lz-q').value.trim() : '';
+  var tot = etat.lzHits ? etat.lzHits.length : 0;
+  el.textContent = !q ? '' : (tot ? ((etat.lzHitIdx + 1) + '/' + tot) : '0');
+}
+
+function effacerSurlignage() {
+  var corps = $('lz-corps'); if (!corps) return;
+  var marks = corps.querySelectorAll('mark.lz-hit');
+  for (var i = 0; i < marks.length; i++) {
+    var m = marks[i], p = m.parentNode;
+    if (!p) continue;
+    p.replaceChild(document.createTextNode(m.textContent), m);
+    p.normalize();
+  }
+  etat.lzHits = null; etat.lzHitIdx = -1;
+}
+
+function reinitTrouver() {
+  effacerSurlignage();
+  var lq = $('lz-q'); if (lq) lq.value = '';
+  majCompteurTrouver();
+}
+
+function activerHit(i, defiler) {
+  var hits = etat.lzHits; if (!hits || !hits.length) return;
+  if (etat.lzHitIdx >= 0 && hits[etat.lzHitIdx]) hits[etat.lzHitIdx].classList.remove('actif');
+  if (i < 0) i = hits.length - 1;
+  if (i >= hits.length) i = 0;
+  etat.lzHitIdx = i;
+  var m = hits[i]; m.classList.add('actif');
+  if (defiler && m.scrollIntoView) m.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  majCompteurTrouver();
+}
+
+function trouverDansFiche(d) {
+  if (!etat.lzHits || !etat.lzHits.length) return;
+  activerHit(etat.lzHitIdx + d, true);
+}
+
+function surlignerDansFiche(q) {
+  effacerSurlignage();
+  var corps = $('lz-corps');
+  q = (q || '').trim();
+  var fq = plier(q);
+  if (!corps || !fq) { majCompteurTrouver(); return; }
+
+  var walker = document.createTreeWalker(corps, NodeFilter.SHOW_TEXT, null, false);
+  var textNodes = [], tn;
+  while ((tn = walker.nextNode())) { if (tn.nodeValue) textNodes.push(tn); }
+
+  var hits = [];
+  textNodes.forEach(function (node) {
+    var V = node.nodeValue;
+    /* pliage caractère par caractère : chaque position pliée retient l'index
+       ORIGINAL, ce qui rétablit exactement la tranche à surligner malgré les
+       accents décomposés. */
+    var folded = '', map = [], i, j;
+    for (i = 0; i < V.length; i++) {
+      var f = plier(V[i]);
+      for (j = 0; j < f.length; j++) { folded += f[j]; map.push(i); }
+    }
+    var idx = folded.indexOf(fq);
+    if (idx < 0) return;
+    var frag = document.createDocumentFragment(), last = 0;
+    while (idx >= 0) {
+      var oStart = map[idx], oEnd = map[idx + fq.length - 1] + 1;
+      if (oStart > last) frag.appendChild(document.createTextNode(V.slice(last, oStart)));
+      var mk = document.createElement('mark');
+      mk.className = 'lz-hit'; mk.textContent = V.slice(oStart, oEnd);
+      frag.appendChild(mk); hits.push(mk);
+      last = oEnd;
+      idx = folded.indexOf(fq, idx + fq.length);
+    }
+    if (last < V.length) frag.appendChild(document.createTextNode(V.slice(last)));
+    if (node.parentNode) node.parentNode.replaceChild(frag, node);
+  });
+
+  etat.lzHits = hits;
+  etat.lzHitIdx = -1;
+  if (hits.length) activerHit(0, false);        // 1re occurrence marquée, sans défiler
+  else majCompteurTrouver();
+}
+
+$('lz-q').addEventListener('input', function () { surlignerDansFiche(this.value); });
+$('lz-q').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') { e.preventDefault(); trouverDansFiche(e.shiftKey ? -1 : 1); return; }
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); reinitTrouver(); this.blur(); }
+});
+$('lz-suiv').onclick = function () { trouverDansFiche(1); };
+$('lz-prec').onclick = function () { trouverDansFiche(-1); };
+
+/* ================================================= drill-down récursif (galaxies)
+   Double-cliquer une galaxie la fait PLONGER : ses fiches s'éclatent en sous-amas
+   par sous-dossier de premier niveau (le critère le plus utile ici — cf. les
+   sous-dossiers fiches/ raw/ des sources), avec repli par PRÉFIXE de
+   nom quand un niveau est plat (ex. un dossier plat de fiches se regroupe par
+   préfixe commun). C'est RÉCURSIF (double-clic sur un sous-amas y plonge à son tour) et
+   CONTEXTUEL (déployer/replier agissent sur le niveau courant). La disposition
+   de base n'est jamais recalculée : on ne fait que SUPERPOSER des positions ;
+   remonter la restaure telle quelle. */
+
+function libelleSousAmas(k) { return k === '(racine)' ? 'racine' : k; }
+
+/** Profondeur de segments commune à toutes les fiches (hors nom de fichier). */
+function profCommune(fiches) {
+  if (!fiches.length) return 1;
+  var parts = fiches.map(function (f) { return f.id.split('/'); });
+  var p = 0;
+  for (;;) {
+    if (p >= parts[0].length - 1) break;
+    var s = parts[0][p], ok = true;
+    for (var i = 1; i < parts.length; i++) {
+      if (parts[i].length - 1 <= p || parts[i][p] !== s) { ok = false; break; }
+    }
+    if (!ok) break;
+    p++;
+  }
+  return Math.max(p, 1);
+}
+
+/** Décide le regroupement d'un ensemble de fiches à la profondeur `prof` :
+    par sous-dossier suivant, sinon par préfixe de nom, sinon terminal (null). */
+function grouper(fiches, prof) {
+  var folders = {}, leaves = [], anyFolder = false, k;
+  for (var i = 0; i < fiches.length; i++) {
+    var segs = fiches[i].id.split('/');
+    if (segs.length > prof + 1) { k = segs[prof]; (folders[k] || (folders[k] = [])).push(fiches[i]); anyFolder = true; }
+    else leaves.push(fiches[i]);
+  }
+  if (anyFolder) return { typ: 'folder', clusters: folders, leaves: leaves };
+
+  var groupes2 = {};
+  for (i = 0; i < fiches.length; i++) {
+    var nom = (fiches[i].fichier || nomFichier(fiches[i].id)).replace(/\.[^.]+$/, '');
+    var tok = (nom.split(/[-_ ]/)[0] || nom).toLowerCase();
+    (groupes2[tok] || (groupes2[tok] = [])).push(fiches[i]);
+  }
+  var cles = Object.keys(groupes2);
+  var multi = cles.filter(function (c) { return groupes2[c].length > 1; }).length;
+  if (fiches.length > 8 && cles.length > 1 && multi >= 1) {
+    var clusters = {}, lv = [];
+    cles.forEach(function (c) { if (groupes2[c].length > 1) clusters[c] = groupes2[c]; else lv.push(groupes2[c][0]); });
+    return { typ: 'prefixe', clusters: clusters, leaves: lv };
+  }
+  return null;
+}
+
+function faireFrame(label, couleur, source, fiches, prof) {
+  return { label: label, couleur: couleur, source: source, fiches: fiches, prof: prof, grp: grouper(fiches, prof) };
+}
+
+function capturerFrom() {
+  for (var i = 0; i < memoire.length; i++) {
+    var m = memoire[i];
+    if (m.kind === 'fiche' && m.wx !== undefined) { m._fromx = m.wx; m._fromy = m.wy; }
+  }
+}
+
+/** Recalcule les décalages (_off) des fiches en portée du frame courant et les
+    marqueurs de sous-amas. Positions RELATIVES au hub de la galaxie plongée. */
+function recomputerOffsets() {
+  etat.marqueurs = [];
+  for (var i = 0; i < memoire.length; i++) if (memoire[i].kind === 'fiche') memoire[i]._off = null;
+  var top = etat.pile.length ? etat.pile[etat.pile.length - 1] : null;
+  if (!top) return;
+
+  var clusters = (top.grp && top.grp.clusters) ? top.grp.clusters : {};
+  var leaves = (top.grp && top.grp.leaves) ? top.grp.leaves : (top.grp ? [] : top.fiches.slice());
+  var cles = Object.keys(clusters);
+  cles.sort(function (a, b) { return clusters[b].length - clusters[a].length || (a < b ? -1 : 1); });
+
+  var esp = 12;
+  var rint = function (cnt) { return 12 + esp * Math.sqrt(Math.max(cnt, 1)) * 0.92; };
+  var K = cles.length;
+  var Rk = cles.map(function (k) { return rint(clusters[k].length); });
+  var maxR = Rk.length ? Math.max.apply(null, Rk) : 1;
+  var Rring = K > 1 ? Math.max(maxR / Math.sin(Math.PI / K) * 1.14, maxR * 1.5) : 0;
+  var Rleaf = leaves.length ? rint(leaves.length) : 0;
+  if (K > 0 && leaves.length) Rring = Math.max(Rring, Rleaf + maxR + esp * 2);
+
+  cles.forEach(function (k, ci) {
+    var ang = -Math.PI / 2 + (K ? ci / K : 0) * TAU;
+    var cx = Math.cos(ang) * Rring, cy = Math.sin(ang) * Rring;
+    clusters[k].forEach(function (f, j) {
+      var pa = j * 2.399963, pr = esp * Math.sqrt(j + 0.5);
+      f._off = { dx: cx + Math.cos(pa) * pr, dy: cy + Math.sin(pa) * pr };
+    });
+    etat.marqueurs.push({
+      dx: cx, dy: cy, cle: k, label: libelleSousAmas(k),
+      count: clusters[k].length, couleur: top.couleur, r: rint(clusters[k].length),
+    });
+  });
+  leaves.forEach(function (f, j) {
+    var pa = j * 2.399963, pr = esp * Math.sqrt(j + 0.5) * (K > 0 ? 0.78 : 1);
+    f._off = { dx: Math.cos(pa) * pr, dy: Math.sin(pa) * pr };
+  });
+}
+
+function demarrerDrillAnim() { etat.drillAnim = true; etat.drillT0 = performance.now(); reveiller(); }
+
+function flyToPlongee() {
+  var hub = etat.galaxie ? etat.galaxie.hub : null; if (!hub) return;
+  var Rtot = 40;
+  for (var i = 0; i < memoire.length; i++) {
+    var m = memoire[i];
+    if (m._off) { var d = Math.sqrt(m._off.dx * m._off.dx + m._off.dy * m._off.dy) + (m.r || 3); if (d > Rtot) Rtot = d; }
+  }
+  majOrientation();
+  resoudre(hub, etat.layout, etat.phase, _w3);
+  projeter(_w3.x, _w3.y, _w3.z, _pr);
+  var z = Math.min(Math.max(Math.min(L, H) * 0.42 / (Rtot + 24), ZOOM_MIN), ZOOM_MAX);
+  volerVers(_pr.x, _pr.y, z, 640);
+}
+
+function entrerGalaxie(hub) {
+  if (!hub || hub.kind !== 'hub') return;
+  var g = parGroupe[hub.groupe]; if (!g) return;
+  if (!etat.pile.length) etat.avantPlongee = { camx: etat.camxC, camy: etat.camyC, zoom: etat.zoomC };
+  etat.replies[g.cle] = false;
+  var fiches = g.fiches.map(function (f) { return parId[f.id]; }).filter(Boolean);
+  var prof = profCommune(fiches);
+  capturerFrom();
+  etat.galaxie = g;
+  etat.pile = [faireFrame(g.label, g.couleur, g.source, fiches, prof)];
+  recomputerOffsets();
+  demarrerDrillAnim(); flyToPlongee();
+  majFiche(null); fermerLiseuse();
+  majFilDariane(); majBoutonsGalaxie();
+  toast('Plongée : ' + g.label);
+}
+
+function descendre(cle) {
+  var top = etat.pile.length ? etat.pile[etat.pile.length - 1] : null;
+  if (!top || !top.grp || !top.grp.clusters[cle]) return;
+  var sous = top.grp.clusters[cle];
+  var prof2 = top.grp.typ === 'folder' ? top.prof + 1 : top.prof;
+  capturerFrom();
+  etat.pile.push(faireFrame(libelleSousAmas(cle), top.couleur, top.source, sous, prof2));
+  recomputerOffsets();
+  demarrerDrillAnim(); flyToPlongee();
+  majFilDariane(); majBoutonsGalaxie();
+}
+
+function aplatirNiveau() {
+  var top = etat.pile.length ? etat.pile[etat.pile.length - 1] : null;
+  if (!top) return;
+  if (!top.grp || !Object.keys(top.grp.clusters).length) { toast('Déjà au niveau des fiches'); return; }
+  capturerFrom();
+  top.grp = null;
+  recomputerOffsets();
+  demarrerDrillAnim(); majBoutonsGalaxie();
+  toast('Sous-amas déployés');
+}
+
+function remonter(force) {
+  var now = performance.now();
+  if (!force && now - etat.dernierRemonte < 320) return;
+  etat.dernierRemonte = now;
+  if (!etat.pile.length) return;
+  capturerFrom();
+  etat.pile.pop();
+  if (!etat.pile.length) {
+    etat.galaxie = null;
+    recomputerOffsets();
+    demarrerDrillAnim();
+    if (etat.avantPlongee) volerVers(etat.avantPlongee.camx, etat.avantPlongee.camy, etat.avantPlongee.zoom, 620);
+    else recentrer();
+  } else {
+    recomputerOffsets();
+    demarrerDrillAnim(); flyToPlongee();
+  }
+  majFilDariane(); majBoutonsGalaxie();
+}
+
+function remonterA(profondeur) {
+  var garde = 0;
+  while (etat.pile.length > profondeur && garde++ < 40) remonter(true);
+}
+
+function estDansPlongee(n) {
+  if (!etat.galaxie) return true;                 // pendant la remontée finale : tout revient
+  if (n.kind === 'fiche') return !!n._off;
+  if (n.kind === 'hub') return parGroupe[n.groupe] === etat.galaxie;
+  if (n.kind === 'centre') return true;
+  return false;
+}
+
+/** Superpose les positions du drill après le calcul du layout de base. */
+function appliquerPlongee() {
+  if (!etat.pile.length && !etat.drillAnim) return;
+  var mix = etat.drillMix;
+  var hub = etat.galaxie ? etat.galaxie.hub : null;
+  var ax = hub ? hub.wx : 0, ay = hub ? hub.wy : 0;
+  for (var i = 0; i < memoire.length; i++) {
+    var n = memoire[i];
+    if (n.kind !== 'fiche') continue;
+    var tx, ty;
+    if (n._off) { tx = ax + n._off.dx; ty = ay + n._off.dy; }
+    else { tx = n.wx; ty = n.wy; }
+    if (etat.drillAnim) {
+      var fx = n._fromx === undefined ? tx : n._fromx;
+      var fy = n._fromy === undefined ? ty : n._fromy;
+      n.wx = fx + (tx - fx) * mix; n.wy = fy + (ty - fy) * mix;
+    } else { n.wx = tx; n.wy = ty; }
+  }
+}
+
+/** Marqueurs des sous-amas : disque doux + étiquette (nom + compte), cliquables. */
+function dessinerPlongee() {
+  if (!etat.pile.length) { for (var z = 0; z < etat.marqueurs.length; z++) etat.marqueurs[z].sx = -9999; return; }
+  var hub = etat.galaxie ? etat.galaxie.hub : null; if (!hub) return;
+  var a = etat.drillAnim ? etat.drillMix : 1;
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (var i = 0; i < etat.marqueurs.length; i++) {
+    var m = etat.marqueurs[i];
+    projeter(hub.wx + m.dx, hub.wy + m.dy, 0, _pr);
+    var sx = (_pr.x - etat.camx) * etat.zoom + L / 2;
+    var sy = (_pr.y - etat.camy) * etat.zoom + H / 2;
+    m.sx = sx; m.sy = sy;
+    var R = Math.max(9, m.r * etat.zoom * 0.34);
+    ctx.globalAlpha = a;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.drawImage(halo(m.couleur), sx - R * 3, sy - R * 3, R * 6, R * 6);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = hexRgba(m.couleur, 0.7); ctx.lineWidth = 1.4;
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath(); ctx.arc(sx, sy, R, 0, TAU); ctx.stroke();
+    ctx.setLineDash([]);
+    /* étiquette */
+    ctx.font = '700 11px -apple-system,Helvetica,Arial';
+    ctx.fillStyle = 'rgba(240,246,255,.96)';
+    ctx.shadowColor = 'rgba(0,0,0,.95)'; ctx.shadowBlur = 8;
+    ctx.fillText(courtLabel(libelleSousAmas(m.label), 22) + '  ·  ' + m.count, sx, sy - R - 11);
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+
+function marqueurSous(sx, sy) {
+  if (!etat.pile.length) return null;
+  var meilleur = null, dmin = 1e9;
+  for (var i = 0; i < etat.marqueurs.length; i++) {
+    var m = etat.marqueurs[i];
+    if (m.sx === undefined || m.sx < -9000) continue;
+    var R = Math.max(m.r * etat.zoom * 0.34, 22);
+    var dx = sx - m.sx, dy = sy - m.sy, d = dx * dx + dy * dy;
+    if (d < R * R && d < dmin) { dmin = d; meilleur = m; }
+  }
+  return meilleur;
+}
+
+/* ------------------------------------------------------------- fil d'ariane */
+
+function majFilDariane() {
+  var el = $('fildariane'); if (!el) return;
+  if (!etat.pile.length) { el.classList.remove('on'); el.innerHTML = ''; return; }
+  var html = '<button data-p="0">← Univers</button>';
+  etat.pile.forEach(function (fr, idx) {
+    html += '<span class="sep">/</span><button data-p="' + (idx + 1) + '">' +
+      echapper(courtLabel(libelleSousAmas(fr.label), 22)) + '</button>';
+  });
+  el.innerHTML = html; el.classList.add('on');
+}
+
+$('fildariane').addEventListener('click', function (e) {
+  var b = e.target.closest ? e.target.closest('button') : null;
+  if (!b) return;
+  remonterA(parseInt(b.getAttribute('data-p'), 10) || 0);
+});
+
+function majBoutonsGalaxie() {
+  var dep = $('b-deployer'), rep = $('b-replier');
+  if (!dep || !rep) return;
+  if (etat.pile.length) { dep.textContent = 'Déployer'; rep.textContent = 'Remonter'; }
+  else { dep.textContent = 'Tout déployer'; rep.textContent = 'Tout replier'; }
+}
+
+/* ========================================================= plein écran & pause */
+
+function elementPleinEcran() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+function basculerPleinEcran() {
+  var el = document.documentElement;
+  if (!elementPleinEcran()) {
+    var demande = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (demande) { try { demande.call(el); } catch (e) { /* ignoré */ } }
+  } else {
+    var sortie = document.exitFullscreen || document.webkitExitFullscreen;
+    if (sortie) { try { sortie.call(document); } catch (e) { /* ignoré */ } }
+  }
+}
+
+function surPleinEcran() {
+  var actif = !!elementPleinEcran();
+  var b = $('b-plein');
+  if (b) { b.classList.toggle('actif', actif); b.textContent = actif ? '⛶ Quitter' : '⛶ Plein écran'; }
+  /* le canvas est en position:fixed inset:0 : sa taille CSS change avec le
+     viewport plein écran — on redimensionne le tampon et le DPR. */
+  dimensionner();
+  setTimeout(dimensionner, 80);
+}
+document.addEventListener('fullscreenchange', surPleinEcran);
+document.addEventListener('webkitfullscreenchange', surPleinEcran);
+
+/* Lancée par l'app du Dock (URL ?app=1), la page s'ouvre dans une fenêtre
+   maximisée SANS barres. Un navigateur interdit le plein écran sans geste :
+   on l'arme donc au TOUT PREMIER clic ou appui de touche, une seule fois.
+   Ainsi il n'y a qu'UN seul plein écran (HTML5), et le bouton F le contrôle
+   vraiment — plus de conflit avec un plein écran natif de fenêtre. */
+(function armerPleinEcranApp() {
+  if (!/[?&]app=1\b/.test(location.search)) return;
+  var fait = false;
+  function entrer() {
+    if (fait) return; fait = true;
+    document.removeEventListener('pointerdown', entrer, true);
+    document.removeEventListener('keydown', entrer, true);
+    if (!elementPleinEcran()) {
+      var el = document.documentElement;
+      var d = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (d) { try { d.call(el); } catch (e) { /* ignoré */ } }
+    }
+  }
+  document.addEventListener('pointerdown', entrer, true);
+  document.addEventListener('keydown', entrer, true);
+})();
+
+function majIndicPause() {
+  var e = $('rot-etat'); if (e) e.textContent = etat.pauseRot ? ' ⏸' : '';
+  var lg = $('lig-rot'); if (lg) lg.classList.toggle('pause', etat.pauseRot);
+}
+
+function basculerPause() {
+  etat.pauseRot = !etat.pauseRot;
+  majIndicPause();
+  toast(etat.pauseRot ? 'Rotation en pause' : 'Rotation relancée');
+  reveiller();
+}
+
+/* ================================================================ démarrage */
+
+var reglages = chargerReglages();
+
+function appliquerReglages() {
+  var p = new URLSearchParams(location.search);
+  var layURL = p.get('layout');
+  if (reglages) {
+    if (reglages.vue) etat.vue = reglages.vue;
+    if (typeof reglages.rotation === 'number') etat.rotation = reglages.rotation;
+    if (typeof reglages.noms === 'boolean') etat.noms = reglages.noms;
+    if (typeof reglages.ressorts === 'number') etat.ressorts = reglages.ressorts;
+    if (typeof reglages.taille === 'number') etat.taille = reglages.taille;
+    if (reglages.replies) etat.replies = reglages.replies;
+    if (typeof reglages.angle === 'number') etat.angle = reglages.angle;
+    if (reglages.layout) { etat.layout = reglages.layout; etat.layoutPrec = reglages.layout; }
+  }
+  if (layURL && ['force', 'circle', 'hex', 'rings'].indexOf(layURL) >= 0) {
+    etat.layout = layURL; etat.layoutPrec = layURL;
+  }
+  /* Paramètres de captures / démonstrations :
+     ?rot=0.6  fixe l'angle de rotation du plan (radians) ;
+     ?spin=0   arrête la rotation automatique pour une image reproductible. */
+  var nb = function (cle) {
+    var v = parseFloat(p.get(cle));
+    return isNaN(v) ? null : v;
+  };
+  var vRot = nb('rot'); if (vRot !== null) etat.angle = vRot;
+  var vSpin = nb('spin'); if (vSpin !== null) etat.rotation = borner(vSpin, 0, 1);
+
+  $('s-rot').value = etat.rotation; $('v-rot').textContent = etat.rotation.toFixed(2).replace('.', ',');
+  $('s-res').value = etat.ressorts; $('v-res').textContent = etat.ressorts.toFixed(2).replace('.', ',');
+  $('s-tai').value = etat.taille; $('v-tai').textContent = etat.taille.toFixed(2).replace('.', ',');
+  $('c-noms').checked = etat.noms;
+  var b = $('layouts').getElementsByTagName('button'), i;
+  for (i = 0; i < b.length; i++) b[i].classList.toggle('actif', b[i].getAttribute('data-lay') === etat.layout);
+  for (i = 0; i < bv.length; i++) bv[i].classList.toggle('actif', bv[i].getAttribute('data-vue') === etat.vue);
+}
+
+function cadrageInitial() {
+  if (reglages && typeof reglages.zoom === 'number') {
+    etat.zoom = reglages.zoom; etat.camx = reglages.camx || 0; etat.camy = reglages.camy || 0;
+    etat.zoomC = etat.zoom; etat.camxC = etat.camx; etat.camyC = etat.camy;
+    majZoomBase();
+  } else {
+    cadrerSurContenu(false);
+  }
+}
+
+function echec(txt) {
+  $('vide').style.display = 'flex';
+  $('vide-txt').innerHTML = txt;
+}
+
+function demarrer(g, c) {
+  if (!g || !g.nodes) { echec('Graphe illisible.'); return; }
+  appliquerReglages();
+  construire(g, c);
+  majCompteurBrouillons();
+  genererEtoiles();
+  dimensionner();
+  cadrageInitial();
+  etat.chaudJusqua = performance.now() + 5000;
+  reveiller();
+  boucler();
+}
+
+window.addEventListener('resize', dimensionner);
+document.addEventListener('visibilitychange', function () { if (!document.hidden) reveiller(); });
+
+if (MODE === 'relie') {
+  apiGet('/api/graph', null, function (g) {
+    apiGet('/api/layers', null, function (c) { demarrer(g, c); },
+      function () { demarrer(g, { applications: [], routines: [], skills: [] }); });
+  }, function (s) {
+    if (HORS_LIGNE) { MODE = 'degrade'; demarrer(HORS_LIGNE.graph, HORS_LIGNE.layers); }
+    else echec('Le serveur a refusé <code>/api/graph</code> (' + s + ').');
+  });
+} else if (MODE === 'degrade') {
+  demarrer(HORS_LIGNE.graph, HORS_LIGNE.layers);
+} else {
+  echec(
+    'Cette page a besoin de données. Ouvrir la console via <code>node UI/server.js</code>, ' +
+    'ou générer l’instantané hors-ligne avec <code>node UI/server.js --snapshot</code> ' +
+    'puis rouvrir <code>UI/univers.html</code> en double-clic.'
+  );
+}
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "_lisez_moi": "Politique de risque LOCALE et versionnée pour les serveurs MCP branchés sur votre Claude Code. Elle est PRIORITAIRE sur les annotations déclarées par les serveurs (readOnlyHint, destructiveHint, idempotentHint, openWorldHint), car celles-ci ne sont pas vérifiables : un serveur peut mentir. Défaut pessimiste : tout serveur absent de cette liste est classé « inconnu », jamais « sans risque ». Les entrées « serveurs » ci-dessous sont des EXEMPLES génériques : remplacez-les par VOS propres serveurs MCP, avec pour chacun le niveau, le pourquoi et la portée.",
+  "avertissement": "Les annotations d'outils MCP ne sont pas vérifiables. Un serveur peut se déclarer en lecture seule et écrire quand même. Cette politique locale prime, et tout écart avec ce que déclare le serveur est signalé.",
+  "niveaux": {
+    "lecture": "Consultation seule : aucune écriture, aucun envoi, aucune publication constatés.",
+    "action": "Agit sur le monde extérieur : écrit, envoie, publie ou modifie un état durable.",
+    "inconnu": "Capacités non déclarées ou non auditées. À traiter comme « action » par prudence."
+  },
+  "defaut": {
+    "level": "inconnu",
+    "why": "Serveur absent de la politique locale : ses capacités n'ont pas été auditées, on ne lui accorde donc aucune présomption d'innocuité.",
+    "origin": "default"
+  },
+  "serveurs": {
+    "docs-lecture-seule": {
+      "level": "lecture",
+      "why": "EXEMPLE — un serveur qui interroge une documentation publique de bibliothèques : aucune écriture locale ; sort tout de même sur le réseau. Remplacez-le par le vôtre.",
+      "portee": "Documentation publique en lecture."
+    },
+    "base-lecture-seule": {
+      "level": "lecture",
+      "why": "EXEMPLE — une base de données montée en lecture seule (--read-only). L'écriture, si elle existe, passe par un autre canal, hors de ce serveur. Remplacez-le par le vôtre.",
+      "portee": "Base de données, lecture seule."
+    },
+    "messagerie-et-agenda": {
+      "level": "action",
+      "why": "EXEMPLE — un connecteur qui lit la boîte et l'agenda mais peut AUSSI envoyer des courriels, créer des événements et supprimer des messages : effet irréversible vers l'extérieur. Remplacez-le par le vôtre.",
+      "portee": "Messagerie et agenda personnels."
+    }
+  },
+  "prefixes": {
+    "_lisez_moi": "Règles par préfixe de nom, appliquées si aucune entrée exacte ne correspond. Exemple ci-dessous pour les connecteurs hébergés côté claude.ai.",
+    "claude_ai_": {
+      "level": "action",
+      "why": "Connecteur hébergé par claude.ai (Gmail, Drive, Agenda…) : lecture large de comptes personnels, et écriture possible (brouillons, fichiers, événements).",
+      "portee": "Comptes tiers connectés au compte Claude."
+    }
+  }
+}

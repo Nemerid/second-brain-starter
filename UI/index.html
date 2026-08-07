@@ -1,0 +1,1531 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Second cerveau — observatoire</title>
+<!--
+  Page unique du visualiseur 4 couches.
+
+  CONTRAINTE STRUCTURANTE : ce fichier doit fonctionner DEUX FOIS.
+    1. servi par UI/server.js  → mode « relié » : XHR sur /api/*, SSE sur /events.
+    2. ouvert en double-clic   → mode « dégradé » : tout vient de window.__BRAIN__
+                                 (écrit par `node UI/server.js --snapshot`).
+  Une page file:// a une origine opaque : ni fetch(), ni type="module", ni import
+  d'un fichier voisin ne passent. D'où : aucun fetch, aucun module, uniquement
+  des <script src> classiques et XMLHttpRequest. Ne pas « moderniser » ce point.
+-->
+<style>
+  :root{
+    --fond:#0b0e14; --panneau:#131720; --panneau-clair:#1a2030; --bord:#232c3f;
+    --texte:#e6ecf5; --texte-doux:#93a1ba; --texte-faible:#63718c;
+    --applications:#3b82f6; --routines:#eab308; --memory:#22c55e; --skills:#a855f7;
+    --danger:#f87171; --ok:#34d399; --alerte:#fbbf24;
+    --r:8px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--fond); color:var(--texte);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; overflow:hidden;
+  }
+  code,.mono{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+  button{font:inherit;color:inherit}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:#26304a;border-radius:6px;border:2px solid var(--fond)}
+  ::-webkit-scrollbar-track{background:transparent}
+
+  /* ------------------------------------------------------------- ossature */
+  .app{display:flex;flex-direction:column;height:100vh}
+  header.barre{
+    display:flex;align-items:center;gap:16px;padding:0 16px;height:52px;
+    background:var(--panneau);border-bottom:1px solid var(--bord);flex:0 0 auto;
+  }
+  .marque{display:flex;align-items:baseline;gap:10px;white-space:nowrap}
+  .marque b{font-size:14px;font-weight:600;letter-spacing:.2px}
+  .marque span{font-size:11px;color:var(--texte-faible);text-transform:uppercase;letter-spacing:1.2px}
+  .onglets{display:flex;gap:4px;margin-left:8px}
+  .onglet{
+    display:flex;align-items:center;gap:8px;padding:7px 14px;border:1px solid transparent;
+    border-radius:var(--r);background:transparent;cursor:pointer;color:var(--texte-doux);
+    font-size:13px;transition:background .12s,color .12s,border-color .12s;
+  }
+  .onglet:hover{background:var(--panneau-clair);color:var(--texte)}
+  .onglet .pastille{width:8px;height:8px;border-radius:50%;background:currentColor;flex:0 0 auto}
+  .onglet[data-couche=applications] .pastille{background:var(--applications)}
+  .onglet[data-couche=routines] .pastille{background:var(--routines)}
+  .onglet[data-couche=memory] .pastille{background:var(--memory)}
+  .onglet[data-couche=skills] .pastille{background:var(--skills)}
+  .onglet .compte{font-size:11px;color:var(--texte-faible);font-variant-numeric:tabular-nums}
+  .onglet.actif{color:var(--texte);background:var(--panneau-clair);border-color:var(--bord)}
+  .onglet.actif[data-couche=applications]{box-shadow:inset 0 -2px 0 var(--applications)}
+  .onglet.actif[data-couche=routines]{box-shadow:inset 0 -2px 0 var(--routines)}
+  .onglet.actif[data-couche=memory]{box-shadow:inset 0 -2px 0 var(--memory)}
+  .onglet.actif[data-couche=skills]{box-shadow:inset 0 -2px 0 var(--skills)}
+  .etat{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:11.5px;color:var(--texte-faible)}
+  .lien-univers{
+    text-decoration:none;color:var(--texte-doux);font-size:12px;padding:5px 11px;
+    border:1px solid var(--bord);border-radius:var(--r);background:var(--panneau-clair);
+    letter-spacing:.3px;transition:color .12s,border-color .12s;
+  }
+  .lien-univers:hover{color:#ffb877;border-color:rgba(255,157,77,.45)}
+  .voyant{display:inline-flex;align-items:center;gap:6px}
+  .voyant i{width:7px;height:7px;border-radius:50%;background:var(--texte-faible);display:inline-block}
+  .voyant.relie i{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+  .voyant.degrade i{background:var(--alerte)}
+  .voyant.rompu i{background:var(--danger)}
+
+  .corps{display:flex;flex:1 1 auto;min-height:0}
+  .vue{flex:1 1 auto;min-width:0;display:none;flex-direction:column;overflow:hidden}
+  .vue.actif{display:flex}
+
+  .bandeau{
+    margin:12px 16px 0;padding:9px 12px;border-radius:var(--r);font-size:12.5px;
+    background:rgba(251,191,36,.09);border:1px solid rgba(251,191,36,.3);color:#f5d491;
+  }
+  .bandeau.erreur{background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.35);color:#fca5a5}
+
+  .entete-vue{padding:14px 16px 10px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .entete-vue h1{margin:0;font-size:15px;font-weight:600}
+  .entete-vue p{margin:0;font-size:12px;color:var(--texte-faible);flex:1 1 240px}
+  .champ{
+    background:var(--panneau);border:1px solid var(--bord);border-radius:var(--r);
+    padding:7px 11px;color:var(--texte);min-width:200px;outline:none;font-size:13px;
+  }
+  .champ:focus{border-color:#3a4a6b}
+  .champ::placeholder{color:var(--texte-faible)}
+
+  .zone{flex:1 1 auto;overflow:auto;padding:6px 16px 20px}
+  .grille{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+
+  .carte{
+    background:var(--panneau);border:1px solid var(--bord);border-radius:var(--r);
+    padding:12px 13px;cursor:pointer;transition:border-color .12s,transform .12s;
+    text-align:left;width:100%;display:block;
+  }
+  .carte:hover{border-color:#33405c}
+  .carte.selection{border-color:#4c5f86;background:var(--panneau-clair)}
+  .carte h3{margin:0 0 6px;font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .carte p{margin:6px 0 0;font-size:12px;color:var(--texte-doux);
+    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .carte .pied{margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+
+  .etiq{
+    display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:999px;
+    font-size:10.5px;letter-spacing:.3px;background:var(--panneau-clair);
+    border:1px solid var(--bord);color:var(--texte-doux);white-space:nowrap;
+  }
+  .etiq.bleu{color:#9dc0ff;border-color:rgba(59,130,246,.4);background:rgba(59,130,246,.12)}
+  .etiq.jaune{color:#f6dd8d;border-color:rgba(234,179,8,.4);background:rgba(234,179,8,.12)}
+  .etiq.vert{color:#8ce6b0;border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.12)}
+  .etiq.violet{color:#d3aefb;border-color:rgba(168,85,247,.4);background:rgba(168,85,247,.12)}
+  .etiq.rouge{color:#fca5a5;border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.12)}
+  .etiq.gris{color:var(--texte-faible)}
+
+  .liste-routines{display:flex;flex-direction:column;gap:8px}
+  .ligne{
+    display:flex;align-items:center;gap:12px;background:var(--panneau);
+    border:1px solid var(--bord);border-left:3px solid var(--routines);
+    border-radius:var(--r);padding:10px 13px;cursor:pointer;text-align:left;width:100%;
+  }
+  .ligne:hover{border-color:#33405c}
+  .ligne.selection{background:var(--panneau-clair);border-color:#4c5f86}
+  .ligne .nom{font-weight:600;font-size:13px;min-width:190px}
+  .ligne .quand{color:var(--texte-doux);font-size:12px;flex:1 1 auto}
+
+  /* ------------------------------------------------------------- mémoire */
+  .memoire{display:flex;flex:1 1 auto;min-height:0}
+  .arbre{
+    flex:0 0 264px;border-right:1px solid var(--bord);overflow:auto;padding:8px 6px 24px;
+    background:rgba(19,23,32,.5);
+  }
+  .arbre details{margin:2px 0}
+  .arbre summary{
+    cursor:pointer;padding:5px 8px;border-radius:6px;font-size:12.5px;
+    display:flex;align-items:center;gap:7px;list-style:none;
+  }
+  .arbre summary::-webkit-details-marker{display:none}
+  .arbre summary:hover{background:var(--panneau-clair)}
+  .arbre summary .fleche{color:var(--texte-faible);font-size:9px;width:8px}
+  .arbre summary .n{margin-left:auto;font-size:10.5px;color:var(--texte-faible);font-variant-numeric:tabular-nums}
+  .arbre .puce{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+  .arbre .feuille{
+    display:flex;align-items:center;gap:7px;padding:4px 8px 4px 22px;border-radius:6px;
+    cursor:pointer;font-size:12px;color:var(--texte-doux);width:100%;text-align:left;
+    background:none;border:0;overflow:hidden;
+  }
+  .arbre .feuille:hover{background:var(--panneau-clair);color:var(--texte)}
+  .arbre .feuille.selection{background:rgba(34,197,94,.14);color:var(--texte)}
+  .arbre .feuille.trouve{box-shadow:inset 2px 0 0 var(--memory)}
+  .arbre .feuille span.t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .arbre .drapeaux{margin-left:auto;display:flex;gap:3px;flex:0 0 auto}
+  .arbre .drapeaux b{width:6px;height:6px;border-radius:50%;display:block}
+
+  .scene{flex:1 1 auto;min-width:0;position:relative;display:flex;flex-direction:column}
+  .filtres{
+    display:flex;align-items:center;gap:10px;padding:9px 14px;flex-wrap:wrap;
+    border-bottom:1px solid var(--bord);background:var(--panneau);
+  }
+  .filtres label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--texte-doux);cursor:pointer}
+  .filtres input[type=checkbox]{accent-color:var(--memory);cursor:pointer}
+  /* force-graph VIDE son élément hôte : le message « graphe vide » doit donc
+     vivre à côté de #graphe, jamais dedans, sinon il disparaît au premier rendu. */
+  .cadre-graphe{flex:1 1 auto;position:relative;min-height:0;display:flex}
+  #graphe{flex:1 1 auto;min-width:0;min-height:0;background:var(--fond)}
+  .legende{
+    position:absolute;left:14px;bottom:14px;background:rgba(11,14,20,.86);
+    border:1px solid var(--bord);border-radius:var(--r);padding:9px 11px;font-size:11px;
+    color:var(--texte-doux);display:flex;flex-direction:column;gap:5px;pointer-events:none;
+  }
+  .legende div{display:flex;align-items:center;gap:7px}
+  .legende i{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .legende i.anneau{background:transparent;border:2px solid var(--danger);width:11px;height:11px}
+  .legende i.anneau.orph{border-color:#94a3b8}
+  .legende i.anneau.brut{border-color:var(--alerte)}
+  .vide-graphe{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    color:var(--texte-faible);font-size:13px;text-align:center;padding:30px;
+    pointer-events:none;
+  }
+
+  /* ---------------------------------------------------------- inspecteur */
+  .inspecteur{
+    flex:0 0 330px;border-left:1px solid var(--bord);background:var(--panneau);
+    display:flex;flex-direction:column;min-height:0;
+  }
+  .inspecteur .tete{padding:13px 14px 11px;border-bottom:1px solid var(--bord)}
+  .inspecteur .tete .sur{font-size:10.5px;text-transform:uppercase;letter-spacing:1.2px;color:var(--texte-faible)}
+  .inspecteur .tete h2{margin:5px 0 0;font-size:14px;font-weight:600;word-break:break-word}
+  .inspecteur .contenu{flex:1 1 auto;overflow:auto;padding:12px 14px 20px}
+  .inspecteur .actions{
+    padding:10px 14px;border-top:1px solid var(--bord);display:flex;flex-direction:column;gap:6px;
+  }
+  .bouton{
+    display:flex;align-items:center;gap:8px;padding:7px 11px;border-radius:6px;
+    background:var(--panneau-clair);border:1px solid var(--bord);cursor:pointer;
+    font-size:12.5px;color:var(--texte-doux);text-align:left;text-decoration:none;
+  }
+  .bouton:hover:not(:disabled){background:#212b40;color:var(--texte);border-color:#33405c}
+  .bouton:disabled{opacity:.4;cursor:not-allowed}
+  .bouton .k{width:14px;text-align:center;color:var(--texte-faible)}
+  dl.meta{margin:0;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;font-size:12px}
+  dl.meta dt{color:var(--texte-faible);white-space:nowrap}
+  dl.meta dd{margin:0;word-break:break-word}
+  .bloc{margin-top:14px}
+  .bloc h4{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--texte-faible)}
+  .bloc p{margin:0;font-size:12.5px;color:var(--texte-doux)}
+  pre.extrait{
+    margin:0;background:var(--fond);border:1px solid var(--bord);border-radius:6px;
+    padding:9px 10px;max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word;
+    font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:11.5px;color:#c3cfe2;
+  }
+  .chemin{
+    font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:11px;color:var(--texte-doux);
+    background:var(--fond);border:1px solid var(--bord);border-radius:6px;padding:7px 8px;
+    word-break:break-all;
+  }
+  .avertissement{
+    margin-top:12px;font-size:11.5px;color:#f5d491;background:rgba(251,191,36,.08);
+    border:1px solid rgba(251,191,36,.25);border-radius:6px;padding:8px 9px;
+  }
+  .rien{color:var(--texte-faible);font-size:12.5px;padding:8px 0}
+  .resultats{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+  .resultat{
+    background:var(--panneau);border:1px solid var(--bord);border-radius:6px;padding:8px 9px;
+    cursor:pointer;text-align:left;width:100%;
+  }
+  .resultat:hover{border-color:#33405c}
+  .resultat .titre{font-size:12.5px;font-weight:600;margin-bottom:3px}
+  .resultat .snip{font-size:11.5px;color:var(--texte-doux)}
+  .resultat .snip b{color:var(--memory);font-weight:600}
+  .resultat .fil{font-size:10.5px;color:var(--texte-faible);margin-top:4px;
+    font-family:"SF Mono",ui-monospace,Menlo,monospace}
+  .toast{
+    position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:50;
+    background:var(--panneau-clair);border:1px solid var(--bord);border-radius:var(--r);
+    padding:9px 16px;font-size:12.5px;color:var(--texte);opacity:0;pointer-events:none;
+    transition:opacity .18s;box-shadow:0 8px 24px rgba(0,0,0,.5);
+  }
+  .toast.vu{opacity:1}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="barre">
+    <div class="marque"><b>Second cerveau</b><span>observatoire</span></div>
+    <nav class="onglets" id="onglets">
+      <button class="onglet actif" data-couche="applications"><i class="pastille"></i>Applications<span class="compte" id="c-applications"></span></button>
+      <button class="onglet" data-couche="routines"><i class="pastille"></i>Routines<span class="compte" id="c-routines"></span></button>
+      <button class="onglet" data-couche="memory"><i class="pastille"></i>Mémoire<span class="compte" id="c-memory"></span></button>
+      <button class="onglet" data-couche="skills"><i class="pastille"></i>Skills<span class="compte" id="c-skills"></span></button>
+    </nav>
+    <div class="etat">
+      <!-- Lien relatif : fonctionne servi (/univers.html) comme en double-clic. -->
+      <a class="lien-univers" href="univers.html" title="Vue Univers">✦ Univers</a>
+      <span class="voyant" id="voyant"><i></i><span id="voyant-txt">démarrage…</span></span>
+      <span id="horodatage"></span>
+    </div>
+  </header>
+
+  <div class="corps">
+    <!-- ---------------------------------------------------- Applications -->
+    <section class="vue actif" data-vue="applications">
+      <div class="entete-vue">
+        <h1>Applications</h1>
+        <p>Serveurs MCP déclarés pour Claude Code. Le niveau de risque vient de la politique locale
+           <code>UI/mcp-risk.json</code>, jamais d'une présomption d'innocuité.</p>
+        <input class="champ" id="filtre-apps" type="search" placeholder="Filtrer les serveurs…">
+      </div>
+      <div id="bandeau-apps"></div>
+      <div class="zone"><div class="grille" id="grille-apps"></div></div>
+    </section>
+
+    <!-- -------------------------------------------------------- Routines -->
+    <section class="vue" data-vue="routines">
+      <div class="entete-vue">
+        <h1>Routines</h1>
+        <p>Ce qui tourne sans qu'on le demande : agents launchd, procédures documentées, skills de consolidation.</p>
+        <input class="champ" id="filtre-routines" type="search" placeholder="Filtrer les routines…">
+      </div>
+      <div class="zone"><div class="liste-routines" id="liste-routines"></div></div>
+    </section>
+
+    <!-- --------------------------------------------------------- Mémoire -->
+    <section class="vue" data-vue="memory">
+      <div class="memoire">
+        <aside class="arbre" id="arbre"></aside>
+        <div class="scene">
+          <div class="filtres">
+            <input class="champ" id="recherche" type="search" placeholder="Rechercher dans le second cerveau…" style="min-width:260px">
+            <label><input type="checkbox" id="f-orphelines"> Orphelines</label>
+            <label><input type="checkbox" id="f-casses"> Liens cassés</label>
+            <label><input type="checkbox" id="f-brut"> Brut non traité</label>
+            <label><input type="checkbox" id="f-etiquettes" checked> Étiquettes</label>
+            <span style="margin-left:auto;font-size:11.5px;color:var(--texte-faible)" id="resume-graphe"></span>
+          </div>
+          <div id="bandeau-memoire"></div>
+          <div class="cadre-graphe">
+            <div id="graphe"></div>
+            <div class="vide-graphe" id="vide-graphe">Chargement du graphe…</div>
+          </div>
+          <div class="legende" id="legende"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------- Skills -->
+    <section class="vue" data-vue="skills">
+      <div class="entete-vue">
+        <h1>Skills</h1>
+        <p>Savoir-faire chargeables. Ceux du projet passent avant ceux de l'utilisateur.</p>
+        <input class="champ" id="filtre-skills" type="search" placeholder="Filtrer les skills…">
+      </div>
+      <div class="zone"><div class="grille" id="grille-skills"></div></div>
+    </section>
+
+    <!-- ----------------------------------------- inspecteur (permanent) -->
+    <aside class="inspecteur">
+      <div class="tete">
+        <div class="sur" id="insp-sur">Inspecteur</div>
+        <h2 id="insp-titre">Aucune sélection</h2>
+      </div>
+      <div class="contenu" id="insp-contenu">
+        <p class="rien">Choisir une application, une routine, une fiche ou une skill pour en voir le détail.</p>
+      </div>
+      <div class="actions">
+        <button class="bouton" id="act-finder" disabled><span class="k">⌘</span>Révéler dans le Finder</button>
+        <button class="bouton" id="act-editeur" disabled><span class="k">↗</span>Ouvrir dans l'éditeur</button>
+        <button class="bouton" id="act-copier" disabled><span class="k">⧉</span>Copier le chemin</button>
+      </div>
+    </aside>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<!-- Jeton de session : remplacé à la volée par server.js. En file://, il reste
+     tel quel et la page bascule d'elle-même en mode dégradé. -->
+<script>window.__BRAIN_SESSION__ = { token: "__JETON_DE_SESSION__", port: "__PORT_DU_SERVEUR__" };</script>
+<!-- Mode dégradé : présent seulement après `node UI/server.js --snapshot`.
+     Servi par HTTP, son absence provoque un 404 sans conséquence. -->
+<script src="data/snapshot.js"></script>
+<script src="vendor/force-graph.min.js"></script>
+<script>
+'use strict';
+(function () {
+
+/* ======================================================== socle & transport */
+
+var SERVI = location.protocol === 'http:' || location.protocol === 'https:';
+var JETON = (window.__BRAIN_SESSION__ && window.__BRAIN_SESSION__.token) || '';
+var HORS_LIGNE = window.__BRAIN__ || null;
+var MODE = SERVI ? 'relie' : (HORS_LIGNE ? 'degrade' : 'orphelin');
+
+var CFG = {
+  editeur: { schemaUrl: 'vscode://file/{chemin}:{ligne}' },
+  graphe: {
+    rayonRelatifMin: 0.07, rayonRelatifMax: 0.3,
+    ticksAvantRelache: 90, autoPauseRedraw: true
+  }
+};
+if (HORS_LIGNE && HORS_LIGNE.config) {
+  if (HORS_LIGNE.config.editeur) CFG.editeur = HORS_LIGNE.config.editeur;
+  if (HORS_LIGNE.config.graphe) CFG.graphe = HORS_LIGNE.config.graphe;
+}
+
+var COULEURS_COUCHE = {
+  applications: '#3b82f6', routines: '#eab308', memory: '#22c55e', skills: '#a855f7'
+};
+
+/** XHR — jamais fetch : une page file:// ne sait pas fetcher son voisin. */
+function apiGet(chemin, params, ok, ko) {
+  var q = [];
+  for (var k in params) if (params[k] !== undefined && params[k] !== null) {
+    q.push(encodeURIComponent(k) + '=' + encodeURIComponent(params[k]));
+  }
+  var url = chemin + (q.length ? '?' + q.join('&') : '');
+  var x = new XMLHttpRequest();
+  x.open('GET', url, true);
+  x.setRequestHeader('X-Brain-Token', JETON);
+  x.onload = function () {
+    var d = null;
+    try { d = JSON.parse(x.responseText); } catch (e) { d = null; }
+    if (x.status >= 200 && x.status < 300) ok(d);
+    else if (ko) ko(x.status, d);
+  };
+  x.onerror = function () { if (ko) ko(0, null); };
+  x.send();
+}
+
+function apiPost(chemin, corps, ok, ko) {
+  var x = new XMLHttpRequest();
+  x.open('POST', chemin, true);
+  x.setRequestHeader('X-Brain-Token', JETON);
+  x.setRequestHeader('Content-Type', 'application/json');
+  x.onload = function () {
+    var d = null;
+    try { d = JSON.parse(x.responseText); } catch (e) { d = null; }
+    if (x.status >= 200 && x.status < 300) ok(d); else if (ko) ko(x.status, d);
+  };
+  x.onerror = function () { if (ko) ko(0, null); };
+  x.send(JSON.stringify(corps));
+}
+
+/* ------------------------------------------------------------- utilitaires */
+
+function $(id) { return document.getElementById(id); }
+function ech(s) {
+  return String(s === undefined || s === null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+function vider(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+function octets(n) {
+  if (!n) return '—';
+  if (n < 1024) return n + ' o';
+  if (n < 1048576) return (n / 1024).toFixed(1).replace('.', ',') + ' Ko';
+  return (n / 1048576).toFixed(1).replace('.', ',') + ' Mo';
+}
+function dateFr(iso) {
+  if (!iso) return '—';
+  var d = new Date(iso);
+  if (isNaN(d)) return String(iso);
+  return d.toLocaleString('fr-FR', {
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+  });
+}
+var minuterieToast = null;
+function toast(msg) {
+  var t = $('toast');
+  t.textContent = msg;
+  t.classList.add('vu');
+  if (minuterieToast) clearTimeout(minuterieToast);
+  minuterieToast = setTimeout(function () { t.classList.remove('vu'); }, 2600);
+}
+
+/* ======================================================================= état */
+
+var etat = {
+  onglet: 'applications',
+  graph: { nodes: [], links: [], sources: [], stats: {}, origine: 'vide', avertissement: '' },
+  layers: { applications: [], routines: [], skills: [], politique: {}, moteur: {} },
+  selection: null,          // { type, cle, data }
+  surlignes: {},            // id de nœud → true (résultats de recherche)
+  filtres: { orphelines: false, casses: false, brut: false, etiquettes: true },
+  index: { noeuds: {}, parSource: {} }
+};
+
+/* ======================================================== couche 1 : Apps */
+
+function classeRisque(niveau) {
+  if (niveau === 'lecture') return 'vert';
+  if (niveau === 'action') return 'jaune';
+  return 'gris';
+}
+function motRisque(niveau) {
+  if (niveau === 'lecture') return 'lecture';
+  if (niveau === 'action') return 'action';
+  return 'inconnu';
+}
+function motOrigine(o) {
+  if (o === 'policy') return 'politique locale';
+  if (o === 'declared') return 'déclaré par le serveur';
+  return 'défaut pessimiste';
+}
+
+function rendreApplications() {
+  var apps = etat.layers.applications || [];
+  var filtre = ($('filtre-apps').value || '').toLowerCase().trim();
+  var grille = $('grille-apps');
+  vider(grille);
+  $('c-applications').textContent = apps.length ? String(apps.length) : '';
+
+  var bandeau = $('bandeau-apps');
+  vider(bandeau);
+  var avert = (etat.layers.politique && etat.layers.politique.avertissement) || '';
+  if (avert) {
+    var b = document.createElement('div');
+    b.className = 'bandeau';
+    b.textContent = avert;
+    bandeau.appendChild(b);
+  }
+
+  var vus = 0;
+  apps.forEach(function (a) {
+    var texte = (a.name + ' ' + a.transport + ' ' + a.scope + ' ' + (a.risk && a.risk.why || '')).toLowerCase();
+    if (filtre && texte.indexOf(filtre) === -1) return;
+    vus++;
+    var c = document.createElement('button');
+    c.className = 'carte' + (estSelection('application', a.name) ? ' selection' : '');
+    c.style.borderLeft = '3px solid ' + COULEURS_COUCHE.applications;
+    var niveau = (a.risk && a.risk.level) || 'inconnu';
+    c.innerHTML =
+      '<h3>' + ech(a.name) +
+        (a.risk && a.risk.divergence ? ' <span class="etiq rouge">écart déclaré</span>' : '') +
+      '</h3>' +
+      '<div class="pied">' +
+        '<span class="etiq bleu">' + ech(a.transport) + '</span>' +
+        '<span class="etiq">' + ech(motPortee(a.scope)) + '</span>' +
+        '<span class="etiq ' + classeRisque(niveau) + '">' + motRisque(niveau) + '</span>' +
+      '</div>' +
+      '<p>' + ech((a.risk && a.risk.why) || '') + '</p>';
+    c.onclick = function () { selectionner('application', a.name, a); };
+    grille.appendChild(c);
+  });
+  if (!vus) {
+    var v = document.createElement('p');
+    v.className = 'rien';
+    v.textContent = apps.length
+      ? 'Aucun serveur ne correspond à ce filtre.'
+      : 'Aucun serveur MCP déclaré.';
+    grille.appendChild(v);
+  }
+}
+
+/* ==================================================== couche 2 : Routines */
+
+function rendreRoutines() {
+  var rs = etat.layers.routines || [];
+  var filtre = ($('filtre-routines').value || '').toLowerCase().trim();
+  var liste = $('liste-routines');
+  vider(liste);
+  $('c-routines').textContent = rs.length ? String(rs.length) : '';
+
+  var vus = 0;
+  rs.forEach(function (r) {
+    var texte = (r.name + ' ' + r.schedule + ' ' + r.kind + ' ' + (r.etat || '')).toLowerCase();
+    if (filtre && texte.indexOf(filtre) === -1) return;
+    vus++;
+    var l = document.createElement('button');
+    l.className = 'ligne' + (estSelection('routine', r.definition) ? ' selection' : '');
+    var mot = r.kind === 'launchd' ? 'launchd' : r.kind === 'skill' ? 'skill' : 'document';
+    l.innerHTML =
+      '<span class="nom">' + ech(r.name) + '</span>' +
+      '<span class="quand">' + ech(r.schedule || '—') + '</span>' +
+      '<span class="etiq jaune">' + mot + '</span>' +
+      '<span class="etiq gris">' + ech(r.etat || '') + '</span>';
+    l.onclick = function () { selectionner('routine', r.definition, r); };
+    liste.appendChild(l);
+  });
+  if (!vus) {
+    var v = document.createElement('p');
+    v.className = 'rien';
+    v.textContent = rs.length
+      ? 'Aucune routine ne correspond à ce filtre.'
+      : 'Aucune routine déclarée : rien ne tourne en dehors de vos sessions.';
+    liste.appendChild(v);
+  }
+}
+
+/* ====================================================== couche 4 : Skills */
+
+function rendreSkills() {
+  var sk = etat.layers.skills || [];
+  var filtre = ($('filtre-skills').value || '').toLowerCase().trim();
+  var grille = $('grille-skills');
+  vider(grille);
+  $('c-skills').textContent = sk.length ? String(sk.length) : '';
+
+  var vus = 0;
+  sk.forEach(function (s) {
+    var texte = (s.name + ' ' + s.description + ' ' + (s.declencheurs || '')).toLowerCase();
+    if (filtre && texte.indexOf(filtre) === -1) return;
+    vus++;
+    var c = document.createElement('button');
+    c.className = 'carte' + (estSelection('skill', s.path) ? ' selection' : '');
+    c.style.borderLeft = '3px solid ' + COULEURS_COUCHE.skills;
+    c.innerHTML =
+      '<h3>' + ech(s.name) + '</h3>' +
+      '<div class="pied">' +
+        '<span class="etiq violet">' + (s.scope === 'project' ? 'projet' : 'utilisateur') + '</span>' +
+        (s.invocable === false ? '<span class="etiq gris">non invocable</span>' : '') +
+        (s.outils ? '<span class="etiq gris">outils restreints</span>' : '') +
+      '</div>' +
+      '<p>' + ech(s.description) + '</p>';
+    c.onclick = function () { selectionner('skill', s.path, s); };
+    grille.appendChild(c);
+  });
+  if (!vus) {
+    var v = document.createElement('p');
+    v.className = 'rien';
+    v.textContent = 'Aucune skill ne correspond à ce filtre.';
+    grille.appendChild(v);
+  }
+}
+
+/* ===================================================== couche 3 : Mémoire */
+
+function couleurSource(idSource) {
+  var s = (etat.graph.sources || []).filter(function (x) { return x.id === idSource; })[0];
+  return (s && s.color) || '#94a3b8';
+}
+function libelleSource(idSource) {
+  var s = (etat.graph.sources || []).filter(function (x) { return x.id === idSource; })[0];
+  return (s && s.label) || idSource || 'source inconnue';
+}
+
+function indexerGraphe() {
+  etat.index.noeuds = {};
+  etat.index.parSource = {};
+  (etat.graph.nodes || []).forEach(function (n) {
+    etat.index.noeuds[n.id] = n;
+    var src = n.source || (n.ghost ? '_fantomes' : '_inconnu');
+    if (!etat.index.parSource[src]) etat.index.parSource[src] = {};
+    var zone = n.ghost ? 'ghost' : (n.zone || 'distilled');
+    if (!etat.index.parSource[src][zone]) etat.index.parSource[src][zone] = [];
+    etat.index.parSource[src][zone].push(n);
+  });
+}
+
+var MOTS_ZONE = {
+  distilled: 'Fiches distillées', raw: 'Dépôt brut',
+  outputs: 'Livrables', ghost: 'Cibles introuvables'
+};
+
+function rendreArbre() {
+  var arbre = $('arbre');
+  var ouverts = {};
+  Array.prototype.forEach.call(arbre.querySelectorAll('details'), function (d) {
+    ouverts[d.dataset.cle] = d.open;
+  });
+  vider(arbre);
+
+  var ids = Object.keys(etat.index.parSource).sort(function (a, b) {
+    if (a[0] === '_') return 1;
+    if (b[0] === '_') return -1;
+    return a.localeCompare(b, 'fr');
+  });
+  if (!ids.length) {
+    var v = document.createElement('p');
+    v.className = 'rien';
+    v.style.padding = '10px';
+    v.textContent = 'Aucun nœud à afficher.';
+    arbre.appendChild(v);
+    return;
+  }
+
+  ids.forEach(function (src) {
+    var zones = etat.index.parSource[src];
+    var total = 0;
+    for (var z in zones) total += zones[z].length;
+    var dSrc = document.createElement('details');
+    dSrc.dataset.cle = 'src:' + src;
+    dSrc.open = ouverts['src:' + src] !== undefined ? ouverts['src:' + src] : true;
+    var sSrc = document.createElement('summary');
+    sSrc.innerHTML =
+      '<span class="fleche">▾</span>' +
+      '<i class="puce" style="background:' + ech(couleurSource(src)) + '"></i>' +
+      '<span>' + ech(src === '_fantomes' ? 'Cibles introuvables' : libelleSource(src)) + '</span>' +
+      '<span class="n">' + total + '</span>';
+    dSrc.appendChild(sSrc);
+
+    ['distilled', 'raw', 'outputs', 'ghost'].forEach(function (zone) {
+      var noeuds = zones[zone];
+      if (!noeuds || !noeuds.length) return;
+      var dZ = document.createElement('details');
+      dZ.dataset.cle = 'zone:' + src + ':' + zone;
+      dZ.open = ouverts['zone:' + src + ':' + zone] !== undefined
+        ? ouverts['zone:' + src + ':' + zone] : (zone === 'distilled');
+      var sZ = document.createElement('summary');
+      sZ.style.paddingLeft = '18px';
+      sZ.innerHTML = '<span class="fleche">▾</span><span>' + MOTS_ZONE[zone] +
+        '</span><span class="n">' + noeuds.length + '</span>';
+      dZ.appendChild(sZ);
+
+      noeuds.slice().sort(function (a, b) {
+        return (a.label || a.id).localeCompare(b.label || b.id, 'fr');
+      }).forEach(function (n) {
+        var f = document.createElement('button');
+        f.className = 'feuille' +
+          (estSelection('noeud', n.id) ? ' selection' : '') +
+          (etat.surlignes[n.id] ? ' trouve' : '');
+        var drapeaux = '';
+        if (n.orphan) drapeaux += '<b style="background:#94a3b8" title="orpheline"></b>';
+        if (n.unprocessed) drapeaux += '<b style="background:#fbbf24" title="brut non traité"></b>';
+        if (n.ghost) drapeaux += '<b style="background:#f87171" title="cible introuvable"></b>';
+        f.innerHTML = '<span class="t">' + ech(n.label || n.id) + '</span>' +
+          (drapeaux ? '<span class="drapeaux">' + drapeaux + '</span>' : '');
+        f.title = n.id;
+        f.onclick = function () { selectionner('noeud', n.id, n); centrerSur(n.id); };
+        dZ.appendChild(f);
+      });
+      dSrc.appendChild(dZ);
+    });
+    arbre.appendChild(dSrc);
+  });
+}
+
+/* ------------------------------------------------------------------ graphe */
+
+var G = null;
+var maxEntrants = 1;
+var ticks = 0;
+var relache = false;
+
+/**
+ * ÉCHELLE — le moteur choisit librement l'amplitude des positions qu'il
+ * persiste (mesuré : ±2 000 unités sur l'index réel, contre ±150 quand la
+ * simulation part de zéro). Tout ce qui se mesure en unités de graphe (rayons,
+ * épaisseur des liens, flèches, seuil d'affichage des étiquettes) est donc
+ * dérivé de l'espacement moyen entre nœuds, jamais fixé en dur.
+ */
+var ESPACEMENT = 60;
+
+function calculerEspacement() {
+  // Médiane des distances au plus proche voisin : « surface / N » surestime
+  // largement dès que les nœuds vivent en amas denses avec des orphelines
+  // en périphérie (mesuré : rayons 4× trop grands sur l'index réel).
+  var pts = [];
+  (etat.graph.nodes || []).forEach(function (n) {
+    if (typeof n.x === 'number' && typeof n.y === 'number') pts.push(n);
+  });
+  if (pts.length < 2) { ESPACEMENT = 60; return; }
+  var ech = pts;
+  if (ech.length > 500) {              // borne le O(N²) sur les très gros graphes
+    var pas = Math.ceil(ech.length / 500);
+    ech = pts.filter(function (_, i) { return i % pas === 0; });
+  }
+  var nn = [];
+  for (var i = 0; i < ech.length; i++) {
+    var best = Infinity;
+    for (var j = 0; j < pts.length; j++) {
+      if (pts[j] === ech[i]) continue;
+      var dx = ech[i].x - pts[j].x, dy = ech[i].y - pts[j].y;
+      var d2 = dx * dx + dy * dy;
+      if (d2 < best) best = d2;
+    }
+    nn.push(Math.sqrt(best));
+  }
+  nn.sort(function (a, b) { return a - b; });
+  // 10e percentile : l'espacement des AMAS, pas celui des orphelines écartées
+  // (mesuré sur l'index réel : p10 ≈ 69, médiane ≈ 338 à cause des 83 orphelines).
+  ESPACEMENT = Math.min(Math.max(nn[Math.floor(nn.length * 0.10)], 12), 160);
+}
+
+function tailleNoeud(n) {
+  var min = ESPACEMENT * (Number(CFG.graphe.rayonRelatifMin) || 0.07);
+  var max = ESPACEMENT * (Number(CFG.graphe.rayonRelatifMax) || 0.3);
+  var r = maxEntrants > 0 ? (n.inbound || 0) / maxEntrants : 0;
+  return min + Math.sqrt(r) * (max - min);
+}
+
+function noeudFiltre(n) {
+  var f = etat.filtres;
+  if (!f.orphelines && !f.casses && !f.brut) return true;
+  if (f.orphelines && n.orphan) return true;
+  if (f.brut && n.unprocessed) return true;
+  if (f.casses && (n.ghost || n.__casse)) return true;
+  return false;
+}
+
+function marquerCasses() {
+  (etat.graph.nodes || []).forEach(function (n) { n.__casse = false; });
+  (etat.graph.links || []).forEach(function (l) {
+    if (!l.broken) return;
+    var s = typeof l.source === 'object' ? l.source.id : l.source;
+    var t = typeof l.target === 'object' ? l.target.id : l.target;
+    if (etat.index.noeuds[s]) etat.index.noeuds[s].__casse = true;
+    if (etat.index.noeuds[t]) etat.index.noeuds[t].__casse = true;
+  });
+}
+
+function dessinerNoeud(n, ctx, echelle) {
+  var r = tailleNoeud(n);
+  var actif = noeudFiltre(n);
+  var trouve = !!etat.surlignes[n.id];
+  var choisi = estSelection('noeud', n.id);
+  ctx.globalAlpha = actif ? 1 : 0.16;
+
+  ctx.beginPath();
+  ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
+  if (n.ghost) {
+    ctx.fillStyle = 'rgba(248,113,113,.18)';
+    ctx.fill();
+    ctx.lineWidth = 1.4 / echelle;
+    ctx.strokeStyle = '#f87171';
+    ctx.setLineDash([3 / echelle, 2 / echelle]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  } else {
+    ctx.fillStyle = couleurSource(n.source);
+    ctx.fill();
+    if (n.zone === 'raw') {
+      ctx.lineWidth = 1.2 / echelle;
+      ctx.strokeStyle = 'rgba(11,14,20,.85)';
+      ctx.stroke();
+    }
+  }
+
+  if (n.orphan) {
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, r + 3 / echelle, 0, 2 * Math.PI);
+    ctx.lineWidth = 1.2 / echelle;
+    ctx.strokeStyle = 'rgba(148,163,184,.85)';
+    ctx.stroke();
+  }
+  if (n.unprocessed) {
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, r + 5.5 / echelle, 0, 2 * Math.PI);
+    ctx.lineWidth = 1.4 / echelle;
+    ctx.strokeStyle = 'rgba(251,191,36,.9)';
+    ctx.stroke();
+  }
+  if (trouve) {
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, r + 8 / echelle, 0, 2 * Math.PI);
+    ctx.lineWidth = 2.2 / echelle;
+    ctx.strokeStyle = '#22c55e';
+    ctx.stroke();
+  }
+  if (choisi) {
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, r + 11 / echelle, 0, 2 * Math.PI);
+    ctx.lineWidth = 1.6 / echelle;
+    ctx.strokeStyle = '#e6ecf5';
+    ctx.stroke();
+  }
+
+  // Seuil exprimé en pixels d'écran entre deux nœuds voisins, pas en zoom brut :
+  // il reste juste quelle que soit l'amplitude choisie par le moteur.
+  var seuil = (trouve || choisi ? 42 : 108) / ESPACEMENT;
+  if (etat.filtres.etiquettes && echelle > seuil && actif) {
+    var t = n.label || n.id;
+    if (t.length > 34) t = t.slice(0, 33) + '…';
+    ctx.font = (11 / echelle) + 'px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = trouve ? '#8ce6b0' : 'rgba(230,236,245,.78)';
+    ctx.fillText(t, n.x, n.y + r + 2.5 / echelle);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function creerGraphe() {
+  var hote = $('graphe');
+  if (typeof ForceGraph !== 'function') {
+    $('vide-graphe').textContent =
+      'La bibliothèque force-graph n’a pas pu être chargée (UI/vendor/force-graph.min.js).';
+    return;
+  }
+  G = ForceGraph()(hote)
+    .backgroundColor('#0b0e14')
+    .nodeId('id')
+    .nodeRelSize(1)
+    // nodeVal est une AIRE (rayon = √val) : renvoyer r² pour que la zone de
+    // clic coïncide avec le rayon réellement dessiné par dessinerNoeud.
+    .nodeVal(function (n) { var r = tailleNoeud(n); return r * r; })
+    .nodeLabel(function (n) {
+      return '<div style="background:#131720;border:1px solid #232c3f;border-radius:6px;' +
+        'padding:6px 8px;color:#e6ecf5;font:12px -apple-system,sans-serif;max-width:320px">' +
+        '<b>' + ech(n.label || n.id) + '</b><br>' +
+        '<span style="color:#93a1ba">' + ech(n.id) + '</span><br>' +
+        '<span style="color:#63718c">' + (n.inbound || 0) + ' entrants · ' +
+        (n.outbound || 0) + ' sortants</span></div>';
+    })
+    .nodeCanvasObject(dessinerNoeud)
+    .nodePointerAreaPaint(function (n, couleur, ctx) {
+      ctx.fillStyle = couleur;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, tailleNoeud(n) + 3, 0, 2 * Math.PI);
+      ctx.fill();
+    })
+    .linkColor(function (l) {
+      return l.broken ? 'rgba(248,113,113,.55)' : 'rgba(99,113,140,.32)';
+    })
+    .linkWidth(function (l) { return ESPACEMENT * (l.broken ? 0.009 : 0.005); })
+    .linkDirectionalArrowLength(function () { return ESPACEMENT * 0.022; })
+    .linkDirectionalArrowRelPos(1)
+    .autoPauseRedraw(CFG.graphe.autoPauseRedraw !== false)
+    .cooldownTicks(Number(CFG.graphe.ticksAvantRelache) || 90)
+    .onNodeClick(function (n) { selectionner('noeud', n.id, n); })
+    .onBackgroundClick(function () { deselectionner(); });
+
+  // Positions persistées : on les réinjecte figées (fx/fy) puis on relâche
+  // après stabilisation, pour que le graphe s'ouvre toujours pareil.
+  G.onEngineTick(function () {
+    ticks++;
+    if (!relache && ticks > (Number(CFG.graphe.ticksAvantRelache) || 90)) {
+      relache = true;
+      (etat.graph.nodes || []).forEach(function (n) { n.fx = undefined; n.fy = undefined; });
+    }
+  });
+
+  window.addEventListener('resize', dimensionnerGraphe);
+}
+
+function dimensionnerGraphe() {
+  if (!G) return;
+  var hote = $('graphe');
+  if (!hote.clientWidth) return;
+  G.width(hote.clientWidth).height(hote.clientHeight);
+}
+
+function alimenterGraphe(conserverVue) {
+  if (!G) return;
+  var vue = null;
+  if (conserverVue) {
+    try { vue = { k: G.zoom(), c: G.centerAt() }; } catch (e) { vue = null; }
+  }
+  maxEntrants = 1;
+  (etat.graph.nodes || []).forEach(function (n) {
+    if ((n.inbound || 0) > maxEntrants) maxEntrants = n.inbound;
+  });
+  calculerEspacement();
+  relache = false;
+  ticks = 0;
+  (etat.graph.nodes || []).forEach(function (n) {
+    if (typeof n.x === 'number' && typeof n.y === 'number') { n.fx = n.x; n.fy = n.y; }
+  });
+  G.graphData({ nodes: etat.graph.nodes || [], links: etat.graph.links || [] });
+  dimensionnerGraphe();
+  var vide = $('vide-graphe');
+  if (vide) {
+    if ((etat.graph.nodes || []).length) {
+      vide.style.display = 'none';
+    } else {
+      vide.style.display = 'flex';
+      vide.textContent = 'Le graphe est vide : lancer « node brain.js index » pour le construire.';
+    }
+  }
+  if (vue && vue.c) {
+    setTimeout(function () {
+      try { G.centerAt(vue.c.x, vue.c.y, 0); G.zoom(vue.k, 0); } catch (e) {}
+    }, 0);
+  } else {
+    setTimeout(function () { try { G.zoomToFit(600, 60); } catch (e) {} }, 380);
+  }
+}
+
+function centrerSur(id) {
+  if (!G) return;
+  var n = etat.index.noeuds[id];
+  if (!n || typeof n.x !== 'number') return;
+  G.centerAt(n.x, n.y, 500);
+  // ~170 px d'écran entre deux voisins : assez près pour lire, assez large
+  // pour garder le voisinage visible.
+  G.zoom(Math.max(G.zoom(), 170 / ESPACEMENT), 500);
+}
+
+function rendreLegende() {
+  var l = $('legende');
+  var srcs = (etat.graph.sources || []).map(function (s) {
+    return '<div><i style="background:' + ech(s.color) + '"></i>' + ech(s.label) + '</div>';
+  }).join('');
+  l.innerHTML = srcs +
+    '<div><i class="anneau orph"></i>orpheline</div>' +
+    '<div><i class="anneau brut"></i>brut non traité</div>' +
+    '<div><i class="anneau"></i>cible introuvable</div>';
+}
+
+function rendreResumeGraphe() {
+  var s = etat.graph.stats || {};
+  var n = (etat.graph.nodes || []).length;
+  $('c-memory').textContent = n ? String(n) : '';
+  $('resume-graphe').textContent =
+    n + ' nœuds · ' + (etat.graph.links || []).length + ' liens · ' +
+    (s.orphans || 0) + ' orphelines · ' + (s.broken || 0) + ' liens cassés · ' +
+    (s.unprocessed || 0) + ' brut non traité';
+
+  var bandeau = $('bandeau-memoire');
+  vider(bandeau);
+  if (etat.graph.avertissement) {
+    var b = document.createElement('div');
+    b.className = 'bandeau';
+    b.textContent = etat.graph.avertissement;
+    bandeau.appendChild(b);
+  }
+}
+
+/* ------------------------------------------------------------- recherche */
+
+var minuterieRecherche = null;
+function surRecherche() {
+  var q = ($('recherche').value || '').trim();
+  if (minuterieRecherche) clearTimeout(minuterieRecherche);
+  if (!q) {
+    etat.surlignes = {};
+    rendreArbre();
+    if (G) G.nodeCanvasObject(dessinerNoeud);
+    montrerResultats(null);
+    return;
+  }
+  minuterieRecherche = setTimeout(function () { lancerRecherche(q); }, 260);
+}
+
+function lancerRecherche(q) {
+  if (MODE !== 'relie') {
+    rechercheLocale(q);
+    return;
+  }
+  apiGet('/api/search', { q: q, k: 12 }, function (d) {
+    appliquerResultats(q, d);
+  }, function (statut, d) {
+    if (d && d.indisponible) {
+      toast('Le moteur brain.js n’est pas encore là — repli sur une recherche par titre.');
+    } else {
+      toast('Recherche indisponible (' + statut + ') — repli sur une recherche par titre.');
+    }
+    rechercheLocale(q);
+  });
+}
+
+/** Repli : sans moteur (ou hors ligne), on filtre sur les libellés du graphe. */
+function rechercheLocale(q) {
+  var m = q.toLowerCase();
+  var res = [];
+  (etat.graph.nodes || []).forEach(function (n) {
+    var t = ((n.label || '') + ' ' + n.id).toLowerCase();
+    if (t.indexOf(m) !== -1) {
+      res.push({ file: n.id, abs: n.abs, heading: n.label, breadcrumb: n.id, snippet: '', local: true });
+    }
+  });
+  appliquerResultats(q, { results: res, confidence: 'low', locale: true });
+}
+
+function appliquerResultats(q, d) {
+  var res = (d && d.results) || [];
+  etat.surlignes = {};
+  res.forEach(function (r) {
+    var id = idDepuisResultat(r);
+    if (id) etat.surlignes[id] = true;
+  });
+  rendreArbre();
+  if (G) G.nodeCanvasObject(dessinerNoeud);
+  montrerResultats({ query: q, data: d, results: res });
+  var n = Object.keys(etat.surlignes).length;
+  if (res.length && !n) toast(res.length + ' résultats, mais aucun nœud correspondant dans le graphe.');
+}
+
+function idDepuisResultat(r) {
+  if (r.abs) {
+    for (var id in etat.index.noeuds) {
+      if (etat.index.noeuds[id].abs === r.abs) return id;
+    }
+  }
+  if (r.file) {
+    if (etat.index.noeuds[r.file]) return r.file;
+    for (var id2 in etat.index.noeuds) {
+      if (id2.indexOf(r.file) !== -1 || r.file.indexOf(id2) !== -1) return id2;
+    }
+  }
+  return null;
+}
+
+function montrerResultats(bloc) {
+  if (!bloc) {
+    if (etat.selection && etat.selection.type === 'recherche') deselectionner();
+    return;
+  }
+  selectionner('recherche', bloc.query, bloc);
+}
+
+/* ===================================================== inspecteur partagé */
+
+function estSelection(type, cle) {
+  return !!(etat.selection && etat.selection.type === type && etat.selection.cle === cle);
+}
+
+function deselectionner() {
+  etat.selection = null;
+  rendreInspecteur();
+  rendreTout(false);
+}
+
+function selectionner(type, cle, data) {
+  etat.selection = { type: type, cle: cle, data: data };
+  rendreInspecteur();
+  rendreApplications();
+  rendreRoutines();
+  rendreSkills();
+  rendreArbre();
+  if (G) G.nodeCanvasObject(dessinerNoeud);
+}
+
+function cheminDeSelection() {
+  var s = etat.selection;
+  if (!s) return '';
+  if (s.type === 'noeud') return s.data.abs || '';
+  if (s.type === 'routine') return s.data.definition || '';
+  if (s.type === 'skill') return s.data.fichier || s.data.path || '';
+  if (s.type === 'application') return '';
+  return '';
+}
+
+function rendreInspecteur() {
+  var s = etat.selection;
+  var sur = $('insp-sur'), titre = $('insp-titre'), corps = $('insp-contenu');
+  vider(corps);
+
+  if (!s) {
+    sur.textContent = 'Inspecteur';
+    titre.textContent = 'Aucune sélection';
+    corps.innerHTML = '<p class="rien">Choisir une application, une routine, ' +
+      'une fiche ou une skill pour en voir le détail.</p>';
+    majActions('');
+    return;
+  }
+
+  if (s.type === 'application') inspecterApplication(s.data, sur, titre, corps);
+  else if (s.type === 'routine') inspecterRoutine(s.data, sur, titre, corps);
+  else if (s.type === 'skill') inspecterSkill(s.data, sur, titre, corps);
+  else if (s.type === 'noeud') inspecterNoeud(s.data, sur, titre, corps);
+  else if (s.type === 'recherche') inspecterRecherche(s.data, sur, titre, corps);
+
+  majActions(cheminDeSelection());
+}
+
+/** Libellé français d'une portée MCP (contrat §4 : user | project | claudeai). */
+function motPortee(p) {
+  if (p === 'user') return 'utilisateur';
+  if (p === 'project') return 'projet';
+  if (p === 'claudeai') return 'connecteur claude.ai';
+  return p || 'portée inconnue';
+}
+
+function ligneMeta(cles) {
+  var h = '<dl class="meta">';
+  cles.forEach(function (c) {
+    if (c[1] === undefined || c[1] === null || c[1] === '') return;
+    h += '<dt>' + ech(c[0]) + '</dt><dd>' + (c[2] ? c[1] : ech(c[1])) + '</dd>';
+  });
+  return h + '</dl>';
+}
+
+function inspecterApplication(a, sur, titre, corps) {
+  sur.textContent = 'Application · serveur MCP';
+  titre.textContent = a.name;
+  var niveau = (a.risk && a.risk.level) || 'inconnu';
+  corps.innerHTML =
+    ligneMeta([
+      ['Transport', a.transport],
+      ['Portée', motPortee(a.scope)],
+      ['Hôte', a.hote],
+      ['Commande', a.commande ? '<code>' + ech(a.commande) + '</code>' : '', true],
+      ['Déclaré dans', (a.provenances || []).join(', ')],
+      ['Risque', '<span class="etiq ' + classeRisque(niveau) + '">' + motRisque(niveau) + '</span>' +
+        ' <span class="etiq gris">' + motOrigine(a.risk && a.risk.origin) + '</span>', true]
+    ]) +
+    '<div class="bloc"><h4>Pourquoi ce niveau</h4><p>' + ech((a.risk && a.risk.why) || '') + '</p></div>' +
+    (a.risk && a.risk.portee
+      ? '<div class="bloc"><h4>Portée réelle</h4><p>' + ech(a.risk.portee) + '</p></div>' : '') +
+    (a.risk && a.risk.divergence
+      ? '<div class="avertissement">' + ech(a.risk.divergence) + '</div>' : '') +
+    '<div class="avertissement">Les annotations d’un serveur MCP ne sont pas vérifiables : ' +
+      'un serveur peut se déclarer inoffensif et agir quand même. Ce qui est affiché ici vient ' +
+      'de la politique locale <code>UI/mcp-risk.json</code>.</div>' +
+    '<div class="bloc"><h4>Secrets</h4><p>Les variables d’environnement de ce serveur ' +
+      '(jetons, clés) ne sont jamais lues ni affichées par cette console.</p></div>';
+}
+
+function inspecterRoutine(r, sur, titre, corps) {
+  sur.textContent = 'Routine · ' + (r.kind === 'launchd' ? 'agent launchd'
+    : r.kind === 'skill' ? 'skill' : 'procédure');
+  titre.textContent = r.name;
+  corps.innerHTML =
+    ligneMeta([
+      ['Cadence', r.schedule],
+      ['Nature', r.kind],
+      ['État', r.etat]
+    ]) +
+    (r.commande ? '<div class="bloc"><h4>Commande</h4><pre class="extrait">' +
+      ech(r.commande) + '</pre></div>' : '') +
+    '<div class="bloc"><h4>Définition</h4><div class="chemin">' + ech(r.definition) + '</div></div>';
+  if (r.definition && /\.(md|plist|sh|json)$/.test(r.definition)) chargerApercu(r.definition, corps);
+}
+
+function inspecterSkill(s, sur, titre, corps) {
+  sur.textContent = 'Skill · ' + (s.scope === 'project' ? 'projet' : 'utilisateur');
+  titre.textContent = s.name;
+  corps.innerHTML =
+    ligneMeta([
+      ['Portée', s.scope === 'project' ? 'projet' : 'utilisateur'],
+      ['Couche', s.layer === 'second-brain' ? 'second cerveau' : 'globale'],
+      ['Invocable', s.invocable === false ? 'par le modèle seulement' : 'par l’utilisateur et le modèle'],
+      ['Taille', s.lignes ? s.lignes + ' lignes' : '']
+    ]) +
+    '<div class="bloc"><h4>Description</h4><p>' + ech(s.description) + '</p></div>' +
+    (s.declencheurs ? '<div class="bloc"><h4>Déclencheurs</h4><p>' + ech(s.declencheurs) + '</p></div>' : '') +
+    (s.outils ? '<div class="bloc"><h4>Outils autorisés</h4><pre class="extrait">' +
+      ech(s.outils) + '</pre></div>' : '') +
+    '<div class="bloc"><h4>Emplacement</h4><div class="chemin">' + ech(s.path) + '</div></div>';
+}
+
+function inspecterNoeud(n, sur, titre, corps) {
+  sur.textContent = 'Mémoire · ' + (n.ghost ? 'cible introuvable' : MOTS_ZONE[n.zone] || n.zone);
+  titre.textContent = n.label || n.id;
+  var drapeaux = [];
+  if (n.orphan) drapeaux.push('<span class="etiq gris">orpheline</span>');
+  if (n.unprocessed) drapeaux.push('<span class="etiq jaune">brut non traité</span>');
+  if (n.ghost) drapeaux.push('<span class="etiq rouge">cible introuvable</span>');
+  corps.innerHTML =
+    ligneMeta([
+      ['Source', libelleSource(n.source)],
+      ['Identifiant', '<code>' + ech(n.id) + '</code>', true],
+      ['Liens entrants', String(n.inbound || 0)],
+      ['Liens sortants', String(n.outbound || 0)],
+      ['Taille', n.size ? octets(n.size) : ''],
+      ['État', drapeaux.length ? drapeaux.join(' ') : '<span class="etiq vert">saine</span>', true]
+    ]) +
+    (n.abs ? '<div class="bloc"><h4>Chemin</h4><div class="chemin">' + ech(n.abs) + '</div></div>' : '') +
+    voisinage(n);
+  if (n.abs && !n.ghost) chargerApercu(n.abs, corps);
+  else if (n.ghost) {
+    var d = document.createElement('div');
+    d.className = 'avertissement';
+    d.textContent = 'Ce nœud n’existe pas sur le disque : un wikilien pointe vers lui sans cible. ' +
+      'Soit la fiche est à créer, soit le lien est à corriger.';
+    corps.appendChild(d);
+  }
+}
+
+function voisinage(n) {
+  var entrants = [], sortants = [];
+  (etat.graph.links || []).forEach(function (l) {
+    var s = typeof l.source === 'object' ? l.source.id : l.source;
+    var t = typeof l.target === 'object' ? l.target.id : l.target;
+    if (s === n.id) sortants.push(t);
+    if (t === n.id) entrants.push(s);
+  });
+  function liste(ids) {
+    if (!ids.length) return '<p class="rien">aucun</p>';
+    return '<div style="display:flex;flex-direction:column;gap:3px">' + ids.slice(0, 14).map(function (id) {
+      var v = etat.index.noeuds[id];
+      return '<button class="bouton" data-vers="' + ech(id) + '" style="padding:5px 9px">' +
+        ech((v && v.label) || id) + '</button>';
+    }).join('') + (ids.length > 14 ? '<p class="rien">… et ' + (ids.length - 14) + ' de plus</p>' : '') +
+    '</div>';
+  }
+  return '<div class="bloc"><h4>Cité par (' + entrants.length + ')</h4>' + liste(entrants) + '</div>' +
+         '<div class="bloc"><h4>Cite (' + sortants.length + ')</h4>' + liste(sortants) + '</div>';
+}
+
+function inspecterRecherche(bloc, sur, titre, corps) {
+  var d = bloc.data || {};
+  sur.textContent = 'Recherche' + (d.locale ? ' · repli local' : ' · brain.js');
+  titre.textContent = '« ' + bloc.query + ' »';
+  var h = ligneMeta([
+    ['Résultats', String((bloc.results || []).length)],
+    ['Confiance', d.confidence === 'low'
+      ? '<span class="etiq jaune">faible</span>' : '<span class="etiq vert">bonne</span>', true],
+    ['Total', d.total_matches !== undefined ? String(d.total_matches) : ''],
+    ['Termes', (d.normalized_terms || []).join(', ')]
+  ]);
+  if (d.hint) h += '<div class="avertissement">' + ech(d.hint) + '</div>';
+  if (d.locale) {
+    h += '<div class="avertissement">Recherche de repli sur les titres du graphe : ' +
+      'le moteur brain.js n’a pas répondu. Le classement n’est pas pertinent.</div>';
+  }
+  h += '<div class="resultats" id="liste-resultats"></div>';
+  corps.innerHTML = h;
+
+  var liste = corps.querySelector('#liste-resultats');
+  (bloc.results || []).forEach(function (r) {
+    var b = document.createElement('button');
+    b.className = 'resultat';
+    b.innerHTML =
+      '<div class="titre">' + ech(r.heading || r.file || '') + '</div>' +
+      (r.snippet ? '<div class="snip">' + snippetHtml(r.snippet) + '</div>' : '') +
+      '<div class="fil">' + ech(r.file || '') +
+        (r.line_start ? ' : ' + r.line_start + '-' + (r.line_end || r.line_start) : '') +
+        (r.score !== undefined ? ' · ' + Number(r.score).toFixed(1) : '') + '</div>';
+    b.onclick = function () {
+      var id = idDepuisResultat(r);
+      if (id && etat.index.noeuds[id]) {
+        selectionner('noeud', id, etat.index.noeuds[id]);
+        centrerSur(id);
+      } else if (r.abs) {
+        ouvrir(r.abs, 'edit');
+      }
+    };
+    liste.appendChild(b);
+  });
+  if (!(bloc.results || []).length) {
+    liste.innerHTML = '<p class="rien">Aucun résultat.</p>';
+  }
+}
+
+/** Le moteur encadre les termes trouvés par `**` : on les rend en gras. */
+function snippetHtml(s) {
+  var morceaux = String(s).split('**');
+  var out = '';
+  for (var i = 0; i < morceaux.length; i++) {
+    out += i % 2 ? '<b>' + ech(morceaux[i]) + '</b>' : ech(morceaux[i]);
+  }
+  return out;
+}
+
+function chargerApercu(chemin, corps) {
+  if (MODE !== 'relie') return;
+  var bloc = document.createElement('div');
+  bloc.className = 'bloc';
+  bloc.innerHTML = '<h4>Aperçu</h4><p class="rien">lecture…</p>';
+  corps.appendChild(bloc);
+  apiGet('/api/file', { path: chemin, from: 1, to: 120 }, function (d) {
+    bloc.innerHTML = '<h4>Aperçu — ' + ech(d.lignes_totales || d.lignesTotales || '?') +
+      ' lignes, ' + octets(d.octets) + ', modifié le ' + dateFr(d.modifie) + '</h4>' +
+      '<pre class="extrait">' + ech(d.contenu || '') + '</pre>';
+  }, function (statut, d) {
+    bloc.innerHTML = '<h4>Aperçu</h4><p class="rien">' +
+      ech((d && d.erreur) || 'Lecture impossible (' + statut + ').') + '</p>';
+  });
+}
+
+/* --------------------------------------------------------------- actions */
+
+function majActions(chemin) {
+  var f = $('act-finder'), e = $('act-editeur'), c = $('act-copier');
+  var possible = !!chemin;
+  f.disabled = !possible || MODE !== 'relie';
+  e.disabled = !possible;
+  c.disabled = !possible;
+  f.title = MODE === 'relie' ? chemin
+    : 'Indisponible hors serveur : un navigateur refuse d’ouvrir le Finder depuis une page file://.';
+  e.title = chemin || '';
+  c.title = chemin || '';
+}
+
+function ouvrir(chemin, mode) {
+  if (!chemin) return;
+  if (MODE === 'relie') {
+    apiPost('/api/open', { path: chemin, mode: mode }, function () {
+      toast(mode === 'reveal' ? 'Révélé dans le Finder.' : 'Ouvert dans l’éditeur.');
+    }, function (statut, d) {
+      toast((d && d.erreur) || 'Ouverture refusée (' + statut + ').');
+    });
+    return;
+  }
+  // Mode dégradé : seul le schéma vscode:// franchit la barrière file://.
+  var modele = (CFG.editeur && CFG.editeur.schemaUrl) || 'vscode://file/{chemin}:{ligne}';
+  var url = modele.replace('{chemin}', chemin).replace('{ligne}', '1');
+  window.location.href = url;
+}
+
+function copier(texte) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(texte).then(function () {
+      toast('Chemin copié.');
+    }, function () { copierRepli(texte); });
+  } else {
+    copierRepli(texte);
+  }
+}
+function copierRepli(texte) {
+  var z = document.createElement('textarea');
+  z.value = texte;
+  z.setAttribute('readonly', '');
+  z.style.position = 'fixed';
+  z.style.opacity = '0';
+  document.body.appendChild(z);
+  z.select();
+  var ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  document.body.removeChild(z);
+  toast(ok ? 'Chemin copié.' : 'Copie impossible — le chemin est affiché dans l’inspecteur.');
+}
+
+/* ================================================================ rendu */
+
+function rendreTout(conserverVue) {
+  rendreApplications();
+  rendreRoutines();
+  rendreSkills();
+  indexerGraphe();
+  marquerCasses();
+  rendreArbre();
+  rendreLegende();
+  rendreResumeGraphe();
+  alimenterGraphe(conserverVue);
+}
+
+function choisirOnglet(nom) {
+  etat.onglet = nom;
+  Array.prototype.forEach.call(document.querySelectorAll('.onglet'), function (b) {
+    b.classList.toggle('actif', b.dataset.couche === nom);
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('.vue'), function (v) {
+    v.classList.toggle('actif', v.dataset.vue === nom);
+  });
+  if (nom === 'memory') setTimeout(dimensionnerGraphe, 0);
+  if (('#' + nom) !== location.hash) {
+    try { history.replaceState(null, '', '#' + nom); } catch (e) {}
+  }
+}
+
+function majVoyant(classe, texte) {
+  var v = $('voyant');
+  v.className = 'voyant ' + classe;
+  $('voyant-txt').textContent = texte;
+}
+
+/* ============================================================ chargement */
+
+function chargerDonnees(conserverVue) {
+  if (MODE !== 'relie') {
+    if (!HORS_LIGNE) {
+      majVoyant('rompu', 'aucune donnée');
+      document.querySelector('.zone').innerHTML =
+        '<div class="bandeau erreur">Cette page est ouverte en double-clic mais l’instantané ' +
+        'n’existe pas. Générer <code>UI/data/snapshot.js</code> avec ' +
+        '<code>node UI/server.js --snapshot</code>, ou lancer <code>node UI/server.js</code>.</div>';
+      return;
+    }
+    etat.graph = HORS_LIGNE.graph || etat.graph;
+    etat.layers = HORS_LIGNE.layers || etat.layers;
+    if (HORS_LIGNE.avertissement) etat.graph.avertissement = HORS_LIGNE.avertissement;
+    $('horodatage').textContent = 'instantané du ' + dateFr(HORS_LIGNE.generatedAt);
+    majVoyant('degrade', 'mode dégradé (hors serveur)');
+    rendreTout(false);
+    return;
+  }
+
+  var restants = 2;
+  var fini = function () {
+    restants--;
+    if (restants) return;
+    rendreTout(conserverVue);
+    $('horodatage').textContent = etat.graph.generatedAt
+      ? 'index du ' + dateFr(etat.graph.generatedAt)
+      : 'index non daté';
+  };
+  apiGet('/api/graph', {}, function (d) {
+    if (d) etat.graph = d;
+    fini();
+  }, function (statut) {
+    majVoyant('rompu', 'graphe indisponible (' + statut + ')');
+    fini();
+  });
+  apiGet('/api/layers', {}, function (d) {
+    if (d) etat.layers = d;
+    fini();
+  }, function (statut) {
+    majVoyant('rompu', 'introspection indisponible (' + statut + ')');
+    fini();
+  });
+}
+
+function brancherEvenements() {
+  if (MODE !== 'relie' || typeof EventSource === 'undefined') return;
+  // EventSource ne sait pas poser d'en-tête : le jeton passe en paramètre.
+  var es = new EventSource('/events?token=' + encodeURIComponent(JETON));
+  es.addEventListener('hello', function () {
+    majVoyant('relie', 'relié · surveillance active');
+  });
+  es.addEventListener('indexation', function () {
+    majVoyant('relie', 'réindexation en cours…');
+  });
+  es.addEventListener('refresh', function (ev) {
+    var d = {};
+    try { d = JSON.parse(ev.data); } catch (e) {}
+    majVoyant(d.erreur ? 'degrade' : 'relie',
+      d.erreur ? 'index en erreur' : 'relié · à jour');
+    chargerDonnees(true);   // le zoom courant est conservé
+  });
+  es.onerror = function () { majVoyant('rompu', 'flux interrompu'); };
+}
+
+/* ================================================================ câblage */
+
+function cabler() {
+  Array.prototype.forEach.call(document.querySelectorAll('.onglet'), function (b) {
+    b.onclick = function () { choisirOnglet(b.dataset.couche); };
+  });
+  $('filtre-apps').oninput = rendreApplications;
+  $('filtre-routines').oninput = rendreRoutines;
+  $('filtre-skills').oninput = rendreSkills;
+  $('recherche').oninput = surRecherche;
+
+  ['orphelines', 'casses', 'brut', 'etiquettes'].forEach(function (nom) {
+    $('f-' + nom).onchange = function () {
+      etat.filtres[nom] = this.checked;
+      if (G) G.nodeCanvasObject(dessinerNoeud);
+    };
+  });
+
+  $('act-finder').onclick = function () { ouvrir(cheminDeSelection(), 'reveal'); };
+  $('act-editeur').onclick = function () { ouvrir(cheminDeSelection(), 'edit'); };
+  $('act-copier').onclick = function () { copier(cheminDeSelection()); };
+
+  // Navigation dans le voisinage, depuis l'inspecteur.
+  $('insp-contenu').addEventListener('click', function (ev) {
+    var b = ev.target.closest ? ev.target.closest('[data-vers]') : null;
+    if (!b) return;
+    var id = b.getAttribute('data-vers');
+    if (etat.index.noeuds[id]) {
+      selectionner('noeud', id, etat.index.noeuds[id]);
+      centrerSur(id);
+    }
+  });
+
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape') { deselectionner(); return; }
+    if ((ev.metaKey || ev.ctrlKey) && ev.key === 'f') {
+      ev.preventDefault();
+      choisirOnglet('memory');
+      $('recherche').focus();
+      return;
+    }
+    if (ev.target && /^(INPUT|TEXTAREA)$/.test(ev.target.tagName)) return;
+    var raccourcis = { '1': 'applications', '2': 'routines', '3': 'memory', '4': 'skills' };
+    if (raccourcis[ev.key]) choisirOnglet(raccourcis[ev.key]);
+  });
+}
+
+/* ------------------------------------------------------------- démarrage */
+
+cabler();
+creerGraphe();
+var ancre = (location.hash || '').slice(1);
+if (/^(applications|routines|memory|skills)$/.test(ancre)) choisirOnglet(ancre);
+window.addEventListener('hashchange', function () {
+  var h = (location.hash || '').slice(1);
+  if (/^(applications|routines|memory|skills)$/.test(h) && h !== etat.onglet) choisirOnglet(h);
+});
+majVoyant(MODE === 'relie' ? 'relie' : 'degrade',
+  MODE === 'relie' ? 'connexion…' : 'mode dégradé (hors serveur)');
+chargerDonnees(false);
+brancherEvenements();
+
+})();
+</script>
+</body>
+</html>

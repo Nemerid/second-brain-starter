@@ -1,0 +1,30 @@
+{
+  "generatedAt": "2026-01-01T00:00:00.000Z",
+  "sources": [
+    { "id": "kb", "label": "Knowledge Base", "color": "#4ade80", "root": "." }
+  ],
+  "stats": { "files": 3, "sections": 3, "links": 2, "orphans": 1, "broken": 0, "unprocessed": 1 },
+  "nodes": [
+    {
+      "id": "kb/wiki/index.md",
+      "label": "Carte des concepts", "source": "kb", "zone": "distilled",
+      "abs": "", "size": 400, "inbound": 2, "outbound": 0,
+      "orphan": false, "unprocessed": false, "statut": null
+    },
+    {
+      "id": "kb/wiki/exemple-fiche.md",
+      "label": "Exemple de fiche (démo)", "source": "kb", "zone": "distilled",
+      "abs": "", "size": 900, "inbound": 0, "outbound": 1,
+      "orphan": true, "unprocessed": false, "statut": "draft"
+    },
+    {
+      "id": "kb/raw/20260101-exemple.md",
+      "label": "Source brute d'exemple", "source": "kb", "zone": "raw",
+      "abs": "", "size": 1200, "inbound": 0, "outbound": 0,
+      "orphan": false, "unprocessed": true, "statut": null
+    }
+  ],
+  "links": [
+    { "source": "kb/wiki/exemple-fiche.md", "target": "kb/wiki/index.md", "broken": false }
+  ]
+}

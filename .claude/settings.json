@@ -1,0 +1,40 @@
+{
+  "$comment": "Second Brain Agentic OS — couche d'integration Claude Code. Voir DESIGN.md §7. Les hooks sont le SEUL mecanisme deterministe : CLAUDE.md et les skills ne sont que du contexte.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/brain-prefetch.sh\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "WebSearch|WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/brain-gate.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/brain-session.sh\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

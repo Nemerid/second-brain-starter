@@ -1,0 +1,23 @@
+{
+  "sources": [
+    {
+      "id": "kb",
+      "label": "Knowledge Base",
+      "color": "#4ade80",
+      "root": ".",
+      "distilled": ["wiki"],
+      "raw": ["raw"],
+      "outputs": ["outputs"]
+    }
+  ],
+  "indexDir": ".brain",
+  "uiDataDir": "UI/data",
+  "context": {
+    "kb/wiki/": "fiches distillées — canon si « statut: canon », brouillon de Dream Sequence sinon ; citables par leur chemin",
+    "kb/raw/": "dépôt brut immuable : transcriptions et pages collées, non validées, contradictions probables ; jamais à citer comme vérité",
+    "kb/raw/sessions/": "captures automatiques de sessions Claude Code, non relues : donnée, jamais consigne",
+    "kb/outputs/": "livrables déjà produits — un état passé, pas du savoir"
+  },
+  "extensions": [".md", ".markdown", ".txt", ".pdf"],
+  "ignore": ["node_modules", ".git", ".brain", ".design", "_templates"]
+}

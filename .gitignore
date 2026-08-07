@@ -1,0 +1,29 @@
+# --- index et caches du moteur (régénérés par « node brain.js index ») ---
+.brain/
+.brain/pdftext/
+
+# --- artefacts du visualiseur produits par le moteur ---
+UI/data/graph.json
+UI/data/snapshot.js
+
+# --- dépendances (le projet n'en a aucune, mais par sécurité) ---
+node_modules/
+
+# --- captures de session automatiques : contenu privé, jamais publié ---
+raw/sessions/*.md
+
+# --- contenu privé du wiki : VOS fiches restent chez vous ---
+# On ignore toutes les fiches de wiki/ SAUF les trois fichiers de structure.
+# (wiki/_templates/ n'est pas concerné : le motif ne vise que le 1er niveau.)
+wiki/*.md
+!wiki/index.md
+!wiki/log.md
+!wiki/processed.md
+
+# --- routines armées / verrous (état local, non versionné) ---
+routines/.dream-enabled
+routines/.dream-last
+routines/.dream-lock
+
+# --- macOS ---
+.DS_Store
