@@ -242,12 +242,6 @@
     font-weight:650;color:#0b0e14;background:#e8c268;border:1px solid #e8c268;border-radius:7px;cursor:pointer}
   .lz-brouillon .bt:hover{background:#f0d488;border-color:#f0d488}
   .lz-brouillon .bt:disabled{opacity:.55;cursor:default}
-  /* Compteur flottant « N brouillons » : discret, cliquable pour les lister. */
-  .brouillons-pill{position:fixed;top:14px;right:14px;z-index:7;
-    padding:6px 12px;border-radius:999px;font-size:11px;font-weight:650;
-    color:#f0cd77;background:rgba(232,194,104,.12);border:1px solid rgba(232,194,104,.5);
-    cursor:pointer;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
-  .brouillons-pill:hover{background:rgba(232,194,104,.22)}
   .lz-meta{font-size:10.5px;color:var(--doux);font-variant-numeric:tabular-nums;margin-bottom:3px}
   .lz-chemin{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:9.5px;color:#586780;word-break:break-all}
   .lz-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
@@ -381,7 +375,6 @@
     <span>observatoire de la connaissance</span>
   </div>
 </div>
-<a class="retour" id="retour" href="index.html">← Console</a>
 
 <aside class="panneau" id="panneau">
   <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Rechercher…  ( / )">
@@ -404,10 +397,16 @@
     <button class="bt" data-vue="dossiers">Dossiers</button>
   </div>
 
+  <div class="sec" id="sec-brouillons" style="display:none">À valider</div>
+  <div class="rang" id="rang-brouillons" style="display:none">
+    <button class="bt" id="b-brouillons" title="Mettre en avant les fiches encore en brouillon">Afficher les brouillons</button>
+  </div>
+
+  <div class="sec">Affichage</div>
+  <label class="coche" style="margin:2px 0 6px"><input type="checkbox" id="c-noms"> Noms de fichiers sur la carte</label>
+
   <div class="lig" id="lig-rot"><span>Rotation<span id="rot-etat"></span></span><span class="val" id="v-rot">0,35</span></div>
   <input type="range" id="s-rot" min="0" max="1" step="0.01" value="0.35">
-
-  <label class="coche"><input type="checkbox" id="c-noms"> Noms de fichiers</label>
 
   <div class="lig"><span>Ressorts</span><span class="val" id="v-res">0,38</span></div>
   <input type="range" id="s-res" min="0" max="1" step="0.01" value="0.38">
@@ -422,8 +421,8 @@
   </div>
   <div class="rang deux" style="margin-top:6px">
     <button class="bt" id="b-recentrer">Recentrer</button>
-    <button class="bt contour" id="b-figer">Figer</button>
   </div>
+
   <div class="compte" id="compte">chargement…</div>
   <div class="compte" id="aide">Maj + glisser (ou clic droit) : pivoter · molette : zoomer</div>
 </aside>
@@ -491,8 +490,6 @@
 </aside>
 
 <div class="toast" id="toast"></div>
-<button class="brouillons-pill" id="brouillons-pill" style="display:none"
-        title="Lister les brouillons à relire"></button>
 <div class="vide" id="vide" style="display:none"><div id="vide-txt"></div></div>
 
 <!-- Jeton de session : remplacé à la volée par server.js. En file://, il reste
@@ -692,6 +689,22 @@ function enregistrerReglages() {
     }));
     toast('Réglages et positions figés');
   } catch (e) { toast('Stockage local indisponible'); }
+}
+
+/* Sauvegarde AUTO et silencieuse des seuls RÉGLAGES (rotation, ressorts, taille,
+   layout, vue, noms) à chaque changement — débouncée. Ne touche pas aux positions
+   ni à la caméra (celles-ci restent gérées explicitement par « Figer »). */
+var minuterieReglages = null;
+function sauverReglagesLeger() {
+  if (minuterieReglages) clearTimeout(minuterieReglages);
+  minuterieReglages = setTimeout(function () {
+    try {
+      var r = chargerReglages() || {};
+      r.layout = etat.layout; r.vue = etat.vue; r.rotation = etat.rotation;
+      r.noms = etat.noms; r.ressorts = etat.ressorts; r.taille = etat.taille;
+      window.localStorage.setItem(CLE, JSON.stringify(r));
+    } catch (e) { /* stockage local indisponible : silencieux */ }
+  }, 350);
 }
 
 /* ================================================================ données */
@@ -2097,7 +2110,7 @@ function estEnAvant(n) {
 
 function opaciteDe(n) {
   var o = 1;
-  if (etat.trouves) o = etat.trouves[n.id] ? 1 : (etat.filtreBrouillons ? 0 : 0.15);
+  if (etat.trouves) o = etat.trouves[n.id] ? 1 : 0.15;
   if (etat.survol || etat.selection) o = estEnAvant(n) ? 1 : Math.min(o, 0.18);
   if (etat.pile.length || etat.drillAnim) {
     var f = etat.drillAnim ? etat.drillMix : 1;
@@ -2346,6 +2359,12 @@ function dessinerApp(n, op, o, aAnneaux) {
   cheminHexagone(n.sx, n.sy, R * 0.78);
   ctx.strokeStyle = 'rgba(160,196,240,.12)'; ctx.lineWidth = 0.8; ctx.stroke();
   if (R > 9) glypheConnecteur(n.glyphe, n.sx, n.sy, R * 0.46);
+  // Anneau de RISQUE (posture de sécurité, lisible d'un coup d'œil) :
+  // rouge = « action » (peut agir sur des comptes) · vert = « lecture » · gris = inconnu.
+  var lvl = (n.data && n.data.risk && n.data.risk.level) || 'inconnu';
+  var colR = lvl === 'action' ? '#f87171' : (lvl === 'lecture' ? '#4ade80' : '#94a3b8');
+  cheminHexagone(n.sx, n.sy, R + 4);
+  ctx.strokeStyle = hexRgba(colR, 0.92); ctx.lineWidth = 2.2; ctx.stroke();
   ctx.restore();
 }
 
@@ -2438,8 +2457,9 @@ function dessinerNoyau(n, temps) {
 function dessinerNoms() {
   if (etat.zoom < 0.25) return;
   ctx.save();
-  ctx.font = '9px -apple-system,Helvetica,Arial';
+  ctx.font = '600 11.5px -apple-system,BlinkMacSystemFont,Helvetica,Arial';
   ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.lineJoin = 'round';
   var montre = 0;
   for (var i = 0; i < noeuds.length; i++) {
     var n = noeuds[i];
@@ -2447,8 +2467,14 @@ function dessinerNoms() {
     var op = opaciteDe(n);
     if (op < 0.5) continue;
     if (montre++ > 900) break;
-    ctx.fillStyle = 'rgba(178,192,216,' + (0.44 * op).toFixed(2) + ')';
-    ctx.fillText(courtLabel(n.fichier, 26), n.sx, n.sy + rayonEcran(n) + 2);
+    var x = n.sx, y = n.sy + rayonEcran(n) + 3;
+    var txt = courtLabel(n.fichier, 28);
+    // halo sombre + texte clair franc → lisible même sur un fond chargé
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(6,10,20,' + (0.78 * op).toFixed(2) + ')';
+    ctx.strokeText(txt, x, y);
+    ctx.fillStyle = 'rgba(228,236,250,' + (0.94 * op).toFixed(2) + ')';
+    ctx.fillText(txt, x, y);
   }
   ctx.restore();
 }
@@ -2864,6 +2890,16 @@ function ligneResultat(r, i) {
 function afficherResultats(q, d) {
   var box = $('resultats'); if (!box) return;
   box.innerHTML = '';
+  box.style.position = 'relative';
+  var fermer = document.createElement('button');
+  fermer.textContent = '✕';
+  fermer.title = 'Fermer la recherche (Échap)';
+  fermer.style.cssText = 'position:absolute;top:6px;right:8px;z-index:2;background:none;border:none;' +
+    'color:inherit;opacity:.55;cursor:pointer;font-size:16px;line-height:1';
+  fermer.onmouseover = function () { this.style.opacity = '1'; };
+  fermer.onmouseout = function () { this.style.opacity = '.55'; };
+  fermer.onclick = function () { var qi = $('q'); if (qi) qi.value = ''; fermerRecherche(); };
+  box.appendChild(fermer);
   var res = ((d && d.results) || []).slice(0, 12);
   etat.resultats = res; etat.selResultat = -1;
 
@@ -2989,6 +3025,7 @@ window.addEventListener('keydown', function (e) {
     if (etat.ficheLue) { fermerLiseuse(); reveiller(); return; }
     if (etat.pile.length) { remonter(true); return; }
     etat.selection = null; etat.survol = null; etat.trouves = null;
+    etat.filtreBrouillons = false; majCompteurBrouillons();   // le mode brouillons se termine aussi
     $('q').value = ''; $('survol').classList.remove('on');
     majFiche(null); reveiller();
   }
@@ -3021,6 +3058,7 @@ function choisirLayout(lay, silencieux) {
   var b = $('layouts').getElementsByTagName('button');
   for (var i = 0; i < b.length; i++) b[i].classList.toggle('actif', b[i].getAttribute('data-lay') === lay);
   if (!silencieux) toast('Disposition ' + NOM_LAYOUT[lay]);
+  sauverReglagesLeger();
   reveiller();
 }
 
@@ -3044,6 +3082,7 @@ for (var i1 = 0; i1 < bv.length; i1++) {
       majZoomBase();
       etat.chaudJusqua = performance.now() + 4000;
       toast(v === 'sources' ? 'Vue par sources' : 'Vue par dossiers');
+      sauverReglagesLeger();
       reveiller();
     };
   })(bv[i1]);
@@ -3052,20 +3091,23 @@ for (var i1 = 0; i1 < bv.length; i1++) {
 $('s-rot').oninput = function () {
   etat.rotation = parseFloat(this.value);
   $('v-rot').textContent = etat.rotation.toFixed(2).replace('.', ',');
+  sauverReglagesLeger();
   reveiller();
 };
 $('s-res').oninput = function () {
   etat.ressorts = parseFloat(this.value);
   $('v-res').textContent = etat.ressorts.toFixed(2).replace('.', ',');
   etat.chaudJusqua = performance.now() + 4000;
+  sauverReglagesLeger();
   reveiller();
 };
 $('s-tai').oninput = function () {
   etat.taille = parseFloat(this.value);
   $('v-tai').textContent = etat.taille.toFixed(2).replace('.', ',');
+  sauverReglagesLeger();
   reveiller();
 };
-$('c-noms').onchange = function () { etat.noms = this.checked; reveiller(); };
+$('c-noms').onchange = function () { etat.noms = this.checked; sauverReglagesLeger(); reveiller(); };
 $('b-deployer').onclick = function () {
   if (etat.pile.length) { aplatirNiveau(); return; }
   etat.replies = {}; toast('Galaxies déployées'); reveiller();
@@ -3076,7 +3118,8 @@ $('b-replier').onclick = function () {
   toast('Galaxies repliées'); reveiller();
 };
 $('b-recentrer').onclick = recentrer;
-$('b-figer').onclick = enregistrerReglages;
+/* « Figer » retiré : les réglages se sauvent désormais tout seuls (sauverReglagesLeger),
+   et les positions des nœuds sont déjà persistées côté moteur (graph.json). */
 $('b-plein').onclick = basculerPleinEcran;
 $('a-explorer').onclick = function () { if (cible && cible.kind === 'hub') entrerGalaxie(cible); };
 $('a-lire').onclick = function () { if (cible && cible.kind === 'fiche') ouvrirLiseuse(cible); };
@@ -3495,16 +3538,21 @@ function majBandeauBrouillon(n, statut) {
 }
 
 function majCompteurBrouillons() {
-  var pill = $('brouillons-pill'); if (!pill) return;
+  var b = $('b-brouillons'); if (!b) return;
   var nb = 0;
   for (var i = 0; i < noeuds.length; i++) {
     var n = noeuds[i];
     if (n.kind === 'fiche' && n.data && n.data.statut === 'draft') nb++;
   }
+  var sec = $('sec-brouillons'), rang = $('rang-brouillons');
   if (nb > 0) {
-    pill.textContent = nb + ' brouillon' + (nb > 1 ? 's' : '');
-    pill.style.display = '';
-  } else pill.style.display = 'none';
+    if (!etat.filtreBrouillons) b.textContent = 'Afficher les brouillons (' + nb + ')';
+    if (sec) sec.style.display = '';
+    if (rang) rang.style.display = '';
+  } else {
+    if (sec) sec.style.display = 'none';
+    if (rang) rang.style.display = 'none';
+  }
 }
 
 /* Liste les brouillons dans le panneau de résultats (réutilisé tel quel) et les
@@ -3519,14 +3567,14 @@ function listerBrouillons() {
     t[n.id] = true;
   }
   if (!res.length) { toast('Aucun brouillon à relire'); return; }
-  etat.filtreBrouillons = true;                    // le reste de l'univers est MASQUÉ (opacité 0)
+  etat.filtreBrouillons = true;                    // brouillons mis en avant, reste estompé à 15 %
   etat.trouves = t;
-  var pill = $('brouillons-pill'); if (pill) pill.textContent = '✓ brouillons seuls — tout afficher';
+  var b = $('b-brouillons'); if (b) b.textContent = '✕ Revenir à tout';
   afficherResultats('brouillons', { results: res, confidence: 'high' });
   reveiller();
 }
 
-$('brouillons-pill').onclick = function () { listerBrouillons(); };
+$('b-brouillons').onclick = function () { listerBrouillons(); };
 
 $('lz-promouvoir').onclick = function () {
   var n = etat.ficheLue, c = n && cheminDe(n);
