@@ -802,7 +802,7 @@ function reconstruireModele() {
 
   /* Les amas fixes (Routines ≈1.16, Skills ≈2.44, Applications ≈3.32 rad) occupent
      le secteur gauche/bas. On le réserve : les galaxies mémoire se répartissent sur
-     l'arc LIBRE seulement, sinon une galaxie (Pangos) se colle à la ruche Applications
+     l'arc LIBRE seulement, sinon une grosse galaxie se colle à la ruche Applications
      en disposition Force. arcLibre est réparti au prorata du poids de chaque galaxie. */
   var RESERVE0 = 0.74, RESERVE1 = 3.80;
   var arcLibre = TAU - (RESERVE1 - RESERVE0);
@@ -4092,27 +4092,8 @@ function surPleinEcran() {
 document.addEventListener('fullscreenchange', surPleinEcran);
 document.addEventListener('webkitfullscreenchange', surPleinEcran);
 
-/* Lancée par l'app du Dock (URL ?app=1), la page s'ouvre dans une fenêtre
-   maximisée SANS barres. Un navigateur interdit le plein écran sans geste :
-   on l'arme donc au TOUT PREMIER clic ou appui de touche, une seule fois.
-   Ainsi il n'y a qu'UN seul plein écran (HTML5), et le bouton F le contrôle
-   vraiment — plus de conflit avec un plein écran natif de fenêtre. */
-(function armerPleinEcranApp() {
-  if (!/[?&]app=1\b/.test(location.search)) return;
-  var fait = false;
-  function entrer() {
-    if (fait) return; fait = true;
-    document.removeEventListener('pointerdown', entrer, true);
-    document.removeEventListener('keydown', entrer, true);
-    if (!elementPleinEcran()) {
-      var el = document.documentElement;
-      var d = el.requestFullscreen || el.webkitRequestFullscreen;
-      if (d) { try { d.call(el); } catch (e) { /* ignoré */ } }
-    }
-  }
-  document.addEventListener('pointerdown', entrer, true);
-  document.addEventListener('keydown', entrer, true);
-})();
+/* Le plein écran ne se déclenche plus automatiquement : il reste piloté
+   uniquement à la demande, par le bouton ⛶ (ou la touche F). */
 
 function majIndicPause() {
   var e = $('rot-etat'); if (e) e.textContent = etat.pauseRot ? ' ⏸' : '';

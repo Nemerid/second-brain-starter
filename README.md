@@ -1,6 +1,6 @@
 # Second Brain Agentic OS — starter
 
-**v0.1.4** — licence MIT
+**v0.1.5** — licence MIT
 
 *A local, agentic second brain for Claude Code. You drop in raw material; the agent
 distills it into an atomic wiki. A dependency-free BM25F engine (`brain.js`) answers
@@ -77,6 +77,8 @@ que du contexte — ils augmentent la probabilité ; seuls les hooks garantissen
 | `.design/` | `proto3.mjs` — prototype de validation du moteur (BM25F + chaîne FR) |
 
 ## Les quatre couches de l'observatoire
+
+![La vue « univers » de l'observatoire : le hub CLAUDE.md au centre, les galaxies de fiches qui rayonnent par source, et l'anneau des applications, routines, mémoire et skills.](docs/img/observatoire-univers.png)
 
 `node UI/server.js` sert une console qui montre l'agent comme un système d'exploitation :
 

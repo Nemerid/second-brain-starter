@@ -18,11 +18,15 @@
  *  3. ORIGINE          — tout POST sans `Origin`, ou avec un `Origin` différent
  *                       de l'origine du serveur, est refusé (403). Sur GET, un
  *                       `Origin` étranger est également refusé.
- *  4. JETON DE SESSION — jeton aléatoire de 32 octets généré au démarrage,
- *                       injecté dans la page servie, exigé en `X-Brain-Token`
- *                       sur `/api/*` (et en `?token=` sur `/events`, EventSource
- *                       ne sachant pas poser d'en-tête). Il ne survit pas au
- *                       redémarrage : un onglet oublié ne peut pas resservir.
+ *  4. JETON DE SESSION — jeton aléatoire de 32 octets, injecté dans la page
+ *                       servie, exigé en `X-Brain-Token` sur `/api/*` (et en
+ *                       `?token=` sur `/events`, EventSource ne sachant pas
+ *                       poser d'en-tête). Il PERSISTE en `.brain/session-token`
+ *                       (mode 600) : un onglet ouvert reste valide d'un
+ *                       redémarrage à l'autre. Il ne protège pas contre un
+ *                       processus local (qui lit déjà les fiches sur disque)
+ *                       mais contre une page web étrangère, qui, elle, ne peut
+ *                       pas lire ce fichier.
  *  5. CONFINEMENT      — tout chemin reçu passe par `path.resolve` puis
  *                       `fs.realpathSync`, et doit rester sous une racine
  *                       déclarée dans `brain.config.json`. Les liens
@@ -88,7 +92,32 @@ const SOURCES = P.lireSources();
 const RACINES = P.calculerRacinesReelles(SOURCES);
 const PORT = args.port || CONFIG.port;
 const HOTE = '127.0.0.1';
-const JETON = crypto.randomBytes(32).toString('hex');
+const JETON = chargerOuCreerJeton();
+
+/* Jeton de session PERSISTANT : rangé en `.brain/session-token` (mode 600,
+ * gitignoré, ignoré par le watcher). Il survit donc aux redémarrages — un
+ * onglet ouvert reste valide après une réindexation nocturne ou un simple
+ * restart, sans « Jeton de session absent » à répétition. Cela n'affaiblit
+ * pas la garde CSRF : le jeton protège contre une PAGE web étrangère, qui ne
+ * peut pas lire un fichier local ; tout processus tournant déjà sous ce compte
+ * lit de toute façon les fiches directement sur disque. Si le fichier est
+ * illisible ou l'écriture échoue, on retombe sur un jeton en mémoire, valide
+ * pour cette seule session (comportement d'avant). */
+function chargerOuCreerJeton() {
+  const dir = path.join(P.KB_DIR, '.brain');
+  const fichier = path.join(dir, 'session-token');
+  try {
+    const existant = fs.readFileSync(fichier, 'utf8').trim();
+    if (/^[0-9a-f]{64}$/.test(existant)) return existant;
+  } catch (_) { /* absent ou illisible : on en fabrique un */ }
+  const neuf = crypto.randomBytes(32).toString('hex');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(fichier, neuf + '\n', { mode: 0o600 });
+    try { fs.chmodSync(fichier, 0o600); } catch (_) { /* best effort */ }
+  } catch (_) { /* écriture impossible : jeton en mémoire pour cette session */ }
+  return neuf;
+}
 
 if (!RACINES.length) {
   process.stderr.write(
@@ -870,7 +899,7 @@ serveur.listen(PORT, HOTE, () => {
     '  Surveillance : ' + (args.watch && CONFIG.indexation.auto ? 'active (debounce ' +
       CONFIG.indexation.debounceMs + ' ms)' : 'désactivée') + '\n' +
     '  Jeton      : ' + JETON + '\n' +
-    '  (le jeton est injecté dans la page ; il change à chaque démarrage)\n' +
+    '  (persistant dans .brain/session-token ; un onglet ouvert reste valide)\n' +
     'Ctrl+C pour arrêter.\n'
   );
   surveiller();
